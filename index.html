@@ -386,7 +386,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.8</span>
+          <span id="versionBadge" class="version-badge">v0.8.9</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -408,7 +408,7 @@
       <div id="message" class="message" aria-live="polite">上下左右に隣り合うブロックを選んでください</div>
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から40個打ち上げる</span>
-        <br><span class="clear-rule">3個=推力4 / 4個=6 / 5個以上=8（上の重量で減衰）</span><br>
+        <br><span class="clear-rule">3個=推力2 / 4個=4 / 5個以上=6（上1個ごとに-1）</span><br>
         <span class="over-rule"><strong>追撃交換</strong>：自動連鎖が途切れた時、隣接交換を1回追加できる</span><br>
         <span class="over-rule"><strong>BONUS</strong>：4個以上または2連鎖以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
@@ -430,7 +430,7 @@
         <li><strong>上下左右に隣り合う2個</strong>を選んで交換</li>
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
-        <li><strong>揃う数が多いほど推力UP</strong>。上に乗るブロックが多いほど重くなり上昇量DOWN</li>
+        <li><strong>揃う数が多いほど推力UP</strong>。上に乗るブロック1個ごとに推力を1消費</li>
         <li>自動連鎖が途切れた時、<strong>隣接交換を1回だけ追加</strong>できる</li>
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
@@ -456,7 +456,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.8";
+    const APP_VERSION = "0.8.9";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -876,9 +876,9 @@
     }
 
     function baseThrustForLength(length) {
-      if (length >= 5) return 8;
-      if (length === 4) return 6;
-      return 4;
+      if (length >= 5) return 6;
+      if (length === 4) return 4;
+      return 2;
     }
 
     function forecastMove(a, b) {
@@ -915,7 +915,7 @@
       for (const [c, col] of columns) {
         let load = 0;
         for (let r = 0; r < col.topMatch; r++) if (trial[r][c] !== null) load++;
-        const effectiveThrust = Math.max(1, col.baseThrust - Math.floor(load / 2));
+        const effectiveThrust = Math.max(1, col.baseThrust - load);
 
         for (let r = 0; r < col.topMatch; r++) {
           if (trial[r][c] !== null && r - effectiveThrust < 0) launched++;
@@ -1271,8 +1271,8 @@
             if (board[r][c] !== null) load++;
           }
 
-          // 上に2個乗るごとに必要推力+1とみなし、実際の上昇距離を1減らす。
-          const effectiveThrust = Math.max(1, info.baseThrust - Math.floor(load / 2));
+          // 上に1個乗るごとに必要推力+1。積み荷1個につき上昇力を1消費する。
+          const effectiveThrust = Math.max(1, info.baseThrust - load);
           thrustNotes.push(`${c + 1}列:${info.baseThrust}→${effectiveThrust}`);
 
           // 上の積み荷は実効推力ぶんだけ上昇。上端を越えなければ盤面に残る。
@@ -1310,7 +1310,7 @@
               matched: true,
               burnout: true
             });
-            launchedOut++;
+            if (nr < 0) launchedOut++;
           }
         }
 
@@ -1534,7 +1534,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個=推力4、4個=6、5個以上=8。上に乗るブロック2個ごとに実効推力が1下がります。揃ったブロックは推力源として上昇後に燃焼し、上のブロックは実効推力ぶんだけ上昇して盤面に残ります。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>追撃交換：</strong>自然連鎖が止まった時、3個以上を作れる交換がある場合だけ発生します。候補ブロックが黄色く光り、1個選ぶと交換相手だけ白く光ります。追撃で揃えば連鎖を引き継いで追加発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個=推力2、4個=4、5個以上=6。上に乗るブロック1個ごとに実効推力が1下がります。揃ったブロックは推力源として上昇後に燃焼し、上のブロックは実効推力ぶんだけ上昇して盤面に残ります。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>追撃交換：</strong>自然連鎖が止まった時、3個以上を作れる交換がある場合だけ発生します。候補ブロックが黄色く光り、1個選ぶと交換相手だけ白く光ります。追撃で揃えば連鎖を引き継いで追加発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
       "盤面に戻る"
     ));
 
