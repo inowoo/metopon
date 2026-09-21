@@ -369,7 +369,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.3.0";
+    const APP_VERSION = "0.3.1";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -430,6 +430,10 @@
       return new Promise(resolve => setTimeout(resolve, fast ? Math.min(ms, 70) : ms));
     }
 
+    function waitExact(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
     // Render moving copies over a stable grid. Positions are measured per phase,
     // so motion travels the full distance on phones as well as desktop screens.
     function animateSpriteByPixels(sprite, fromX, fromY, toX, toY, duration, kind) {
@@ -455,10 +459,13 @@
           return;
         }
 
-        // 通常速度では「1フレーム = 1ドット」。
-        // 早送り時だけ複数ドット進める。
-        const pixelsPerFrame = fast ? 5 : 1;
+        // 揃ったブロックのロケット上昇は、通常速度なら
+        // 1ドット進んで少し待つ、を繰り返す。
+        // これで高リフレッシュレート環境でも速くなりすぎない。
+        const pixelsPerStep = fast ? 5 : 1;
+        const stepInterval = kind === "matchedRocket" && !fast ? 28 : 0;
         let travelled = 0;
+        let lastStepAt = 0;
 
         function finish() {
           sprite.style.left = `${endX}px`;
@@ -476,12 +483,17 @@
           }
         }
 
-        function tick() {
-          travelled = Math.min(totalPixels, travelled + pixelsPerFrame);
+        function tick(now) {
+          if (stepInterval > 0 && lastStepAt !== 0 && now - lastStepAt < stepInterval) {
+            requestAnimationFrame(tick);
+            return;
+          }
+          lastStepAt = now;
+
+          travelled = Math.min(totalPixels, travelled + pixelsPerStep);
           const t = travelled / totalPixels;
 
-          // dominant-axis 기준で1pxずつ進めるので、
-          // 縦の打ち上げ・落下では通常時に必ず1ドットずつ動く。
+          // 縦のロケット上昇は通常速度で1回につき必ず1pxだけ進む。
           const x = Math.round(startX + dx * t);
           const y = Math.round(startY + dy * t);
           sprite.style.left = `${x}px`;
@@ -984,8 +996,29 @@
         render();
         return;
       }
+
       const move = moves[Math.floor(Math.random() * moves.length)];
-      setMessage("おまかせで1手進めます");
+
+      // おまかせでも何を操作したのか追えるように、
+      // 人がクリックするような間を入れて1マスずつ見せる。
+      busy = true;
+      hinted = [];
+      selected = move.a;
+      setMessage("おまかせ：1個目を選びます");
+      render();
+      await waitExact(650);
+
+      selected = move.b;
+      setMessage("おまかせ：交換先を選びます");
+      render();
+      await waitExact(650);
+
+      selected = null;
+      setMessage("おまかせ：この2個を交換します");
+      render();
+      await waitExact(450);
+
+      busy = false;
       await makeMove(move.a, move.b);
     }
 
