@@ -932,18 +932,20 @@
         const gained = (matches.size * 10 + launchedOut * 35) * chain;
         score += gained;
 
+        let riseDelayedNow = false;
         if (launchedOut > 0) {
           launchedTotal += launchedOut;
           if (launchedOut >= 3 && !riseBonusGrantedThisMove) {
             nextRiseTurn += 1;
             riseBonusGrantedThisMove = true;
+            riseDelayedNow = true;
           }
         }
         if (score > best) {
           best = score;
           localStorage.setItem("metopon-best", String(best));
         }
-        const delayText = launchedOut >= 3 && riseBonusGrantedThisMove ? "・せり上がりを1手延期！" : "";
+        const delayText = riseDelayedNow ? "・せり上がりを1手延期！" : "";
         setMessage(
           launchedOut > 0
             ? `${chain}連鎖・${launchedOut}個を宇宙へ！ LAUNCH ${launchedTotal}/${LAUNCH_GOAL}${delayText} +${gained}`
