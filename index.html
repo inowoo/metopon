@@ -323,7 +323,7 @@
         <div class="status-item"><span class="status-label">BEST</span><span class="status-value" id="best">0</span></div>
         <div class="status-item"><span class="status-label">TURN</span><span class="status-value" id="turn">0</span></div>
         <div class="status-item"><span class="status-label">RISE</span><span class="status-value" id="rise">3</span></div>
-        <div class="status-item"><span class="status-label">GOAL</span><span class="status-value" id="goal">1500</span></div>
+        <div class="status-item"><span class="status-label">LAUNCH</span><span class="status-value" id="launchCount">0/6</span></div>
       </div>
 
       <div class="board-wrap">
@@ -333,8 +333,9 @@
 
       <div id="message" class="message" aria-live="polite">左右に並んだブロックを選んでください</div>
       <div class="stage-rules" aria-label="ステージルール">
-        <span class="clear-rule"><strong>CLEAR</strong>：1500点到達</span>
+        <span class="clear-rule"><strong>CLEAR</strong>：上端から6個打ち上げる</span>
         &nbsp;／&nbsp;
+        <span class="over-rule"><strong>BONUS</strong>：一度に3個以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
       </div>
 
@@ -378,12 +379,12 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.3.2";
+    const APP_VERSION = "0.4.0";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
     const RISE_EVERY = 3;
-    const CLEAR_SCORE = 1500;
+    const LAUNCH_GOAL = 6;
     const SYMBOLS = ["●", "▲", "■", "★"];
     const NAMES = ["丸", "三角", "四角", "星"];
 
@@ -393,7 +394,7 @@
     const bestEl = document.getElementById("best");
     const turnEl = document.getElementById("turn");
     const riseEl = document.getElementById("rise");
-    const goalEl = document.getElementById("goal");
+    const launchCountEl = document.getElementById("launchCount");
     const messageEl = document.getElementById("message");
     const undoBtn = document.getElementById("undoBtn");
     const hintBtn = document.getElementById("hintBtn");
@@ -411,6 +412,9 @@
     let score = 0;
     let best = Number(localStorage.getItem("metopon-best") || 0);
     let turn = 0;
+    let launchedTotal = 0;
+    let nextRiseTurn = RISE_EVERY;
+    let riseBonusGrantedThisMove = false;
     let busy = false;
     let fast = false;
     let gameOver = false;
@@ -448,39 +452,32 @@
     function animateSpriteByPixels(sprite, fromX, fromY, toX, toY, duration, kind) {
       return new Promise(resolve => {
         const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-        if (reduced || duration <= 1) {
-          sprite.style.left = `${Math.round(toX)}px`;
-          sprite.style.top = `${Math.round(toY)}px`;
-          resolve();
-          return;
-        }
-
         const startX = Math.round(fromX);
         const startY = Math.round(fromY);
         const endX = Math.round(toX);
         const endY = Math.round(toY);
-        const dx = endX - startX;
-        const dy = endY - startY;
-        const totalPixels = Math.max(Math.abs(dx), Math.abs(dy));
 
-        if (totalPixels === 0) {
+        if (reduced || duration <= 1) {
+          sprite.style.left = `${endX}px`;
+          sprite.style.top = `${endY}px`;
           resolve();
           return;
         }
 
-        // 通常速度は、交換・打ち上げ・落下・せり上がりをすべて
-        // 1ステップ = 1px に統一する。CSSの座標補間は使わない。
-        const pixelsPerStep = fast ? 5 : 1;
-        const normalIntervals = {
-          swap: 22,
-          launch: 20,
-          matchedRocket: 30,
-          fall: 16,
-          rise: 20
+        // 全移動を「現在座標を±1pxする」方式で処理する。
+        // 補間率から座標を算出しないため、通常速度では本当に1pxずつ進む。
+        let x = startX;
+        let y = startY;
+        const fastStep = 5;
+        const stepPixels = fast ? fastStep : 1;
+        const intervalTable = {
+          swap: 6,
+          launch: 10,
+          matchedRocket: 10,
+          fall: 5,
+          rise: 8
         };
-        const stepInterval = fast ? 0 : (normalIntervals[kind] ?? 18);
-        let travelled = 0;
-        let lastStepAt = 0;
+        const interval = fast ? 4 : (intervalTable[kind] ?? 8);
 
         function finish() {
           sprite.style.left = `${endX}px`;
@@ -498,30 +495,28 @@
           }
         }
 
-        function tick(now) {
-          if (stepInterval > 0 && lastStepAt !== 0 && now - lastStepAt < stepInterval) {
-            requestAnimationFrame(tick);
+        function step() {
+          const remainX = endX - x;
+          const remainY = endY - y;
+
+          if (remainX === 0 && remainY === 0) {
+            finish();
             return;
           }
-          lastStepAt = now;
 
-          travelled = Math.min(totalPixels, travelled + pixelsPerStep);
-          const t = travelled / totalPixels;
+          if (remainX !== 0) {
+            x += Math.sign(remainX) * Math.min(stepPixels, Math.abs(remainX));
+          }
+          if (remainY !== 0) {
+            y += Math.sign(remainY) * Math.min(stepPixels, Math.abs(remainY));
+          }
 
-          // 盤面上の移動座標は必ず整数pxに丸める。
-          const x = Math.round(startX + dx * t);
-          const y = Math.round(startY + dy * t);
           sprite.style.left = `${x}px`;
           sprite.style.top = `${y}px`;
-
-          if (travelled < totalPixels) {
-            requestAnimationFrame(tick);
-          } else {
-            finish();
-          }
+          setTimeout(step, interval);
         }
 
-        requestAnimationFrame(tick);
+        setTimeout(step, interval);
       });
     }
 
@@ -667,9 +662,8 @@
       scoreEl.textContent = score.toLocaleString("ja-JP");
       bestEl.textContent = best.toLocaleString("ja-JP");
       turnEl.textContent = turn;
-      const remainder = turn % RISE_EVERY;
-      riseEl.textContent = remainder === 0 ? RISE_EVERY : RISE_EVERY - remainder;
-      goalEl.textContent = CLEAR_SCORE.toLocaleString("ja-JP");
+      riseEl.textContent = Math.max(0, nextRiseTurn - turn);
+      launchCountEl.textContent = `${launchedTotal}/${LAUNCH_GOAL}`;
       const disabled = busy || gameOver || cleared;
       hintBtn.disabled = disabled;
       autoBtn.disabled = disabled;
@@ -794,7 +788,7 @@
     }
 
     function saveUndo() {
-      undoState = { board: copyBoard(), score, turn };
+      undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
     }
 
     async function onCellClick(event) {
@@ -841,6 +835,7 @@
       ];
       swapOn(board, a, b);
       turn++;
+      riseBonusGrantedThisMove = false;
       setMessage("交換しました。結果を確認します…");
       await animateMoves(swapMoves, "swap", 460);
 
@@ -861,7 +856,8 @@
       if (cleared || gameOver) return;
       if (chain === 0) setMessage("マッチなし。次の一手をどうぞ");
 
-      if (turn % RISE_EVERY === 0 && !gameOver) {
+      if (turn >= nextRiseTurn && !gameOver) {
+        nextRiseTurn += RISE_EVERY;
         await addRow();
         if (!gameOver) await resolveBoard();
         if (cleared || gameOver) return;
@@ -935,11 +931,25 @@
 
         const gained = (matches.size * 10 + launchedOut * 35) * chain;
         score += gained;
+
+        if (launchedOut > 0) {
+          launchedTotal += launchedOut;
+          if (launchedOut >= 3 && !riseBonusGrantedThisMove) {
+            nextRiseTurn += 1;
+            riseBonusGrantedThisMove = true;
+          }
+        }
         if (score > best) {
           best = score;
           localStorage.setItem("metopon-best", String(best));
         }
-        setMessage(launchedOut > 0 ? `${chain}連鎖・${launchedOut}個を宇宙へ！ +${gained}` : `${chain}連鎖！ +${gained}`, "combo");
+        const delayText = launchedOut >= 3 && riseBonusGrantedThisMove ? "・せり上がりを1手延期！" : "";
+        setMessage(
+          launchedOut > 0
+            ? `${chain}連鎖・${launchedOut}個を宇宙へ！ LAUNCH ${launchedTotal}/${LAUNCH_GOAL}${delayText} +${gained}`
+            : `${chain}連鎖！ +${gained}`,
+          "combo"
+        );
         await animateMoves(launchMoves, "launch", 1200);
         await wait(320);
 
@@ -947,7 +957,7 @@
         await animateMoves(fallMoves, "fall", 980);
         await wait(260);
 
-        if (score >= CLEAR_SCORE) {
+        if (launchedTotal >= LAUNCH_GOAL) {
           clearGame();
           break;
         }
@@ -1055,6 +1065,8 @@
       board = undoState.board.map(row => [...row]);
       score = undoState.score;
       turn = undoState.turn;
+      launchedTotal = undoState.launchedTotal ?? 0;
+      nextRiseTurn = undoState.nextRiseTurn ?? RISE_EVERY;
       undoState = null;
       selected = null;
       hinted = [];
@@ -1066,10 +1078,15 @@
     function clearGame() {
       cleared = true;
       busy = false;
-      setMessage(`STAGE CLEAR：${CLEAR_SCORE.toLocaleString("ja-JP")}点達成！`, "combo");
+      setMessage(`STAGE CLEAR：${LAUNCH_GOAL}個打ち上げ達成！`, "combo");
       render();
       localStorage.removeItem("metopon-save");
-      showDialog("CLEAR!", `目標の <strong>${CLEAR_SCORE.toLocaleString("ja-JP")}</strong> 点を達成しました！<br>最終スコアは <strong>${score.toLocaleString("ja-JP")}</strong> 点です。`, "もう一度遊ぶ", newGame);
+      showDialog(
+        "STAGE CLEAR!",
+        `上端から <strong>${launchedTotal}個</strong> 打ち上げました！<br>目標は ${LAUNCH_GOAL}個。最終スコアは <strong>${score.toLocaleString("ja-JP")}</strong> 点です。`,
+        "もう一度遊ぶ",
+        newGame
+      );
     }
 
     function endGame() {
@@ -1083,7 +1100,7 @@
 
     function saveGame() {
       if (gameOver || cleared) return;
-      localStorage.setItem("metopon-save", JSON.stringify({ board, score, turn }));
+      localStorage.setItem("metopon-save", JSON.stringify({ board, score, turn, launchedTotal, nextRiseTurn }));
     }
 
     function loadGame() {
@@ -1093,6 +1110,8 @@
           board = saved.board;
           score = Number(saved.score) || 0;
           turn = Number(saved.turn) || 0;
+          launchedTotal = Number(saved.launchedTotal) || 0;
+          nextRiseTurn = Number(saved.nextRiseTurn) || RISE_EVERY;
           return true;
         }
       } catch (_) {
@@ -1104,6 +1123,9 @@
     function newGame() {
       score = 0;
       turn = 0;
+      launchedTotal = 0;
+      nextRiseTurn = RISE_EVERY;
+      riseBonusGrantedThisMove = false;
       gameOver = false;
       cleared = false;
       busy = false;
@@ -1111,7 +1133,7 @@
       hinted = [];
       undoState = null;
       fillInitialBoard();
-      setMessage(`目標 ${CLEAR_SCORE.toLocaleString("ja-JP")} 点。左右に並んだブロックを選んでください`);
+      setMessage(`目標：上端から${LAUNCH_GOAL}個打ち上げる。3個同時ならせり上がりを1手延期！`);
       render();
       saveGame();
     }
@@ -1141,7 +1163,11 @@
       else updateStatus();
     });
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
-    helpBtn.addEventListener("click", () => showDialog("遊び方", "横に並んだ2個を交換し、同じ記号を縦か横に3個そろえます。<br>交換後の打ち上げ・落下・連鎖はすべて自動です。考えている間は盤面が動きません。", "盤面に戻る"));
+    helpBtn.addEventListener("click", () => showDialog(
+      "遊び方",
+      `横に並んだ2個を交換し、同じ記号を縦か横に3個そろえます。<br>交換後の打ち上げ・落下・連鎖はすべて自動です。<br><br><strong>上端から${LAUNCH_GOAL}個飛ばすとSTAGE CLEAR。</strong><br>一度に3個以上飛ばすと、次のせり上がりが1手遅れます。`,
+      "盤面に戻る"
+    ));
 
     versionBadge.textContent = `v${APP_VERSION}`;
     document.title = `METOPON v${APP_VERSION} - 打ち上げ連鎖パズル`;
