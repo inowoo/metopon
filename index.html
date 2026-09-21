@@ -411,7 +411,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.1";
+    const APP_VERSION = "0.8.2";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -1059,18 +1059,22 @@
             const matched = info.matchedRows.has(r) && matches.has(key(r, c));
             board[r][c] = null;
 
+            const nr = r - info.thrust;
+
             if (matched) {
+              // 揃ったブロックも上に乗ったブロックと同じ推力で上昇させる。
+              // 上端まで単独で突き抜けさせると、上のブロックを追い越して見えるため。
               launchMoves.push({
                 from: { r, c },
-                to: { r: -1, c },
+                to: { r: nr, c },
                 value,
                 matched: true
               });
+              // マッチしたブロックは上昇演出後に消える。LAUNCH進捗には従来どおり加算。
               launchedOut++;
               continue;
             }
 
-            const nr = r - info.thrust;
             moving.push({ r, nr, value });
           }
 
@@ -1091,7 +1095,7 @@
 
         for (const p of placements) board[p.r][p.c] = p.value;
 
-        setMessage("マッチの大きさに応じて上方向へ打ち上げ！", "combo");
+        setMessage("揃ったブロックと上のブロックを一緒に打ち上げ！", "combo");
         await animateMoves(launchMoves, "launch", 1200);
 
         const bigMatch = lines.some(line => line.length >= 4);
@@ -1294,7 +1298,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>マッチの大きさが推力：</strong>3個=2マス、4個=4マス、5個以上=6マス。揃ったブロック自身はロケットとして飛びます。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補を①②で表示します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>マッチの大きさが推力：</strong>3個=2マス、4個=4マス、5個以上=6マス。揃ったブロックと、その上に乗ったブロックは同じ距離だけ一緒に上昇します。揃ったブロックは上昇後に消えます。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補を①②で表示します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
       "盤面に戻る"
     ));
 
