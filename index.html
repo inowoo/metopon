@@ -192,11 +192,6 @@
     .cell.match { animation: ignite .34s ease-in-out 2; z-index: 2; }
     .cell.launch { animation: launch .38s ease-out; z-index: 2; }
     .cell.fall { animation: fall .3s ease-out; }
-    .cell.armed { box-shadow: inset 0 0 0 3px #fff; border-style: dashed; }
-    .cell.armed::before { content: "待"; position: absolute; bottom: -2px; right: -2px; background: #fff; color: #08101f; font-size: 11px; line-height: 16px; width: 16px; border-radius: 3px; z-index: 8; }
-    .cell.rotate-area { outline: 3px solid white; outline-offset: -2px; z-index: 5; }
-    .mechanics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 6px; }
-    .mechanics .fire { grid-column: span 2; }
     .cell.empty { color: transparent; }
     .match-burst {
       position: absolute;
@@ -374,18 +369,11 @@
       <div id="message" class="message" aria-live="polite">上下左右に隣り合うブロックを選んでください</div>
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
-        <br><span class="clear-rule">交換・回転で仕込む → 発射 → 自動連鎖</span><br>
+        <br><span class="clear-rule">交換 → マッチ → 自動発射・連鎖</span><br>
         <span class="over-rule"><strong>BONUS</strong>：一度に3個以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
       </div>
 
-      <div class="mechanics">
-        <button id="rotateModeBtn" class="control" type="button" aria-pressed="false">2×2を選ぶ</button>
-        <button id="fireBtn" class="control primary fire" type="button">発射（0個待ち）</button>
-        <button id="rotateLeftBtn" class="control" type="button" disabled>↶ 左回転</button>
-        <button id="rotateRightBtn" class="control" type="button" disabled>↷ 右回転</button>
-        <button id="swapModeBtn" class="control" type="button">交換に戻る</button>
-      </div>
       <div class="controls">
         <button id="undoBtn" class="control" type="button">↶ 一手戻す</button>
         <button id="hintBtn" class="control" type="button">◇ ヒント</button>
@@ -400,14 +388,12 @@
       <h2>遊び方</h2>
       <ol class="howto">
         <li><strong>上下左右に隣り合う2個</strong>を選んで交換</li>
-        <li>同じ記号を縦か横に<strong>3個</strong>そろえる</li>
-        <li><strong>2×2回転</strong>でも配置を仕込める（1回1手）</li>
-        <li>そろったら点火待ち。好きな時に<strong>「発射」</strong></li>
-        <li>残ったブロックは<strong>自動で落下</strong></li>
-        <li>落下後のマッチは自動で<strong>連鎖</strong></li>
+        <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
+        <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
+        <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（大量打ち上げで延期）</li>
       </ol>
-      <p class="rule-note">考えている間は何も進みません。上の点線を越えないように、ブロックを宇宙へ飛ばしましょう。「おまかせ候補」は多く飛ばせる交換を提案します。すぐ揃う手がなければ自動で1段追加します。</p>
+      <p class="rule-note">考えている間は何も進みません。上の点線を越えないように、ブロックを宇宙へ飛ばしましょう。「おまかせ候補」は多く飛ばせる交換を提案します。揃う交換がなければ自動で1段追加します。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -420,7 +406,7 @@
   <div id="overlay" class="overlay">
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
       <h2 id="dialogTitle">METOPON</h2>
-      <p id="dialogText">上下左右の隣り合うブロックを入れ替え、3個そろえましょう。<br>そろったら「発射」を押しましょう。発射後の落下と連鎖は自動です。</p>
+      <p id="dialogText">上下左右の隣り合うブロックを入れ替え、3個そろえましょう。<br>揃った瞬間に自動で発射し、落下と連鎖まで進みます。</p>
       <button id="dialogBtn" class="control primary" type="button">ゲームを始める</button>
     </div>
   </div>
@@ -457,13 +443,6 @@
     const dialogBtn = document.getElementById("dialogBtn");
 
     let board = emptyBoard();
-    const rotateModeBtn = document.getElementById("rotateModeBtn");
-    const rotateLeftBtn = document.getElementById("rotateLeftBtn");
-    const rotateRightBtn = document.getElementById("rotateRightBtn");
-    const swapModeBtn = document.getElementById("swapModeBtn");
-    const fireBtn = document.getElementById("fireBtn");
-    let rotationMode = false;
-    let rotationAnchor = null;
     let selected = null;
     let score = 0;
     let best = Number(localStorage.getItem("metopon-best") || 0);
@@ -684,19 +663,9 @@
       undoBtn.disabled = disabled || !undoState;
       newBtn.disabled = busy;
       speedBtn.classList.toggle("active", fast);
-      const readyCount = findMatches().size;
-      fireBtn.disabled = disabled || readyCount === 0;
-      fireBtn.textContent = `発射（${readyCount}個待ち）`;
-      rotateModeBtn.disabled = disabled;
-      rotateModeBtn.classList.toggle("active", rotationMode);
-      rotateModeBtn.setAttribute("aria-pressed", String(rotationMode));
-      rotateLeftBtn.disabled = rotateRightBtn.disabled = disabled || !rotationMode || !rotationAnchor;
-      swapModeBtn.disabled = disabled || !rotationMode;
-
     }
 
     function render(classes = new Map()) {
-      const armed = busy ? new Set() : findMatches();
       boardEl.replaceChildren();
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
@@ -724,8 +693,6 @@
           } else if (hinted.length) {
             cell.classList.add("hint-muted");
           }
-          if (armed.has(key(r, c))) cell.classList.add("armed");
-          if (rotationMode && rotationAnchor && r >= rotationAnchor.r && r <= rotationAnchor.r + 1 && c >= rotationAnchor.c && c <= rotationAnchor.c + 1) cell.classList.add("rotate-area");
           const extra = classes.get(key(r, c));
           if (extra) cell.classList.add(extra);
           cell.disabled = gameOver || cleared || busy;
@@ -876,14 +843,6 @@
       const r = Number(event.currentTarget.dataset.row);
       const c = Number(event.currentTarget.dataset.col);
       if (busy || gameOver || cleared) return;
-      if (rotationMode) {
-        rotationAnchor = { r: Math.min(r, ROWS - 2), c: Math.min(c, COLS - 2) };
-        selected = null;
-        hinted = [];
-        setMessage("白枠の2×2を左回転・右回転できます（1回1手）。左上のマスを押して範囲を変更");
-        render();
-        return;
-      }
       if (!hinted.some(p => p.r === r && p.c === c)) hinted = [];
       if (!selected) {
         selected = { r, c };
@@ -905,68 +864,38 @@
       render();
     }
 
-    function rotationCells(anchor) {
-      const { r, c } = anchor;
-      return [{ r, c }, { r, c: c + 1 }, { r: r + 1, c: c + 1 }, { r: r + 1, c }];
-    }
-
-    function rotateOn(target, anchor, direction) {
-      const cells = rotationCells(anchor);
-      const values = cells.map(p => target[p.r][p.c]);
-      return cells.map((from, i) => {
-        const to = cells[(i + (direction > 0 ? 1 : 3)) % 4];
-        target[to.r][to.c] = values[i];
-        return { from, to, value: values[i] };
-      });
-    }
-
-    function possibleRotations() {
-      const candidates = [];
-      for (let r = 0; r < ROWS - 1; r++) for (let c = 0; c < COLS - 1; c++) {
-        for (const direction of [-1, 1]) {
-          const trial = copyBoard();
-          rotateOn(trial, { r, c }, direction);
-          if (findMatches(trial).size) candidates.push({ anchor: { r, c }, direction });
-        }
-      }
-      return candidates;
-    }
-
-    function setRotationMode(enabled) {
-      if (busy || gameOver || cleared) return;
-      rotationMode = enabled;
-      rotationAnchor = null;
-      selected = null;
-      hinted = [];
-      setMessage(enabled ? "回したい2×2の左上を選び、左回転・右回転を押してください" : "上下左右の隣同士を2個選ぶと交換します");
-      render();
-    }
-
     function describeReadyBoard() {
-      const count = findMatches().size;
-      setMessage(count
-        ? `${count}個が点火待ち。「発射」で打ち上げ！ さらに仕込めます（並びを崩すと解除）`
-        : "交換・2×2回転で仕込もう。3個そろえたら好きな時に発射", count ? "combo" : "");
+      setMessage("上下左右の隣同士を2個選んで交換。3個以上揃うと自動で発射します");
     }
 
     async function replenishUntilPlayable() {
-      while (!gameOver && !cleared && !findMatches().size && !possibleMoves().length && !possibleRotations().length) {
+      while (!gameOver && !cleared && !possibleMoves().length) {
         selected = null;
-        rotationAnchor = null;
         hinted = [];
-        setMessage("交換・回転で揃う手がないので、自動で1段追加します", "danger");
+        setMessage("揃う交換がないので、自動で1段追加します", "danger");
         render();
         await wait(600);
         nextRiseTurn = turn + RISE_EVERY;
         await addRow();
-        // 新しく揃ったブロックは点火待ち。ここでは自動発射しない。
+        if (gameOver || cleared) return;
+        if (findMatches().size) {
+          await resolveBoard();
+          if (gameOver || cleared) return;
+        }
       }
     }
 
     async function resumePlayableBoard() {
       if (busy || gameOver || cleared) return;
       busy = true;
+      selected = null;
+      hinted = [];
+      riseBonusGrantedThisMove = false;
       render();
+      if (findMatches().size) {
+        await resolveBoard();
+        if (gameOver || cleared) return;
+      }
       await replenishUntilPlayable();
       if (gameOver || cleared) return;
       busy = false;
@@ -975,13 +904,16 @@
       saveGame();
     }
 
-    async function finishSetupTurn() {
+    async function finishTurn() {
       turn++;
       if (turn >= nextRiseTurn) {
         nextRiseTurn += RISE_EVERY;
-        rotationAnchor = null;
         await addRow();
-        if (gameOver) return;
+        if (gameOver || cleared) return;
+        if (findMatches().size) {
+          await resolveBoard();
+          if (gameOver || cleared) return;
+        }
       }
       await replenishUntilPlayable();
       if (gameOver || cleared) return;
@@ -996,44 +928,18 @@
       if (Math.abs(a.r - b.r) + Math.abs(a.c - b.c) !== 1) return;
       saveUndo();
       busy = true;
+      riseBonusGrantedThisMove = false;
       hinted = [];
       selected = null;
       const moves = [{ from: a, to: b, value: board[a.r][a.c] }, { from: b, to: a, value: board[b.r][b.c] }];
       swapOn(board, a, b);
-      setMessage("交換して仕込み中…");
+      setMessage("交換中…");
       await animateMoves(moves, "swap", 460);
-      await finishSetupTurn();
-    }
-
-    async function rotateSelection(direction) {
-      if (busy || gameOver || cleared || !rotationMode || !rotationAnchor) return;
-      saveUndo();
-      busy = true;
-      selected = null;
-      hinted = [];
-      const moves = rotateOn(board, rotationAnchor, direction);
-      setMessage(direction > 0 ? "2×2を右回転して仕込み中…" : "2×2を左回転して仕込み中…");
-      await animateMoves(moves, "rotate", 460);
-      await finishSetupTurn();
-    }
-
-    async function fireReadyBlocks() {
-      if (busy || gameOver || cleared || !findMatches().size) return;
-      saveUndo();
-      busy = true;
-      selected = null;
-      rotationAnchor = null;
-      hinted = [];
-      riseBonusGrantedThisMove = false;
-      render();
-      await resolveBoard();
-      if (cleared || gameOver) return;
-      await replenishUntilPlayable();
-      if (cleared || gameOver) return;
-      busy = false;
-      describeReadyBoard();
-      render();
-      saveGame();
+      if (findMatches().size) {
+        await resolveBoard();
+        if (cleared || gameOver) return;
+      }
+      await finishTurn();
     }
 
     async function resolveBoard() {
@@ -1172,22 +1078,13 @@
 
     function showHint() {
       if (busy || gameOver || cleared) return;
-      if (findMatches().size) { describeReadyBoard(); render(); return; }
+      if (findMatches().size) { void resumePlayableBoard(); return; }
       const moves = possibleMoves();
       if (!moves.length) {
-        const rotations = possibleRotations();
-        if (rotations.length) {
-          rotationMode = true;
-          rotationAnchor = rotations[0].anchor;
-          selected = null;
-          hinted = [];
-          setMessage(`この2×2を${rotations[0].direction > 0 ? "右" : "左"}回転すると揃います`);
-          render();
-        } else void resumePlayableBoard();
+        void resumePlayableBoard();
         return;
       }
       const move = moves[Math.floor(Math.random() * moves.length)];
-      rotationMode = false; rotationAnchor = null;
       hinted = [move.a, move.b];
       selected = null;
       setMessage("白枠の①と②がヒントです。2個を選ぶと交換できます");
@@ -1196,22 +1093,13 @@
 
     function autoMove() {
       if (busy || gameOver || cleared) return;
-      if (findMatches().size) { describeReadyBoard(); render(); return; }
+      if (findMatches().size) { void resumePlayableBoard(); return; }
       const moves = possibleMoves();
       if (!moves.length) {
-        const rotations = possibleRotations();
-        if (rotations.length) {
-          rotationMode = true;
-          rotationAnchor = rotations[0].anchor;
-          selected = null;
-          hinted = [];
-          setMessage(`この2×2を${rotations[0].direction > 0 ? "右" : "左"}回転すると揃います`);
-          render();
-        } else void resumePlayableBoard();
+        void resumePlayableBoard();
         return;
       }
       moves.sort((a, b) => forecastMove(b.a, b.b).launched - forecastMove(a.a, a.b).launched);
-      rotationMode = false; rotationAnchor = null;
       hinted = [moves[0].a, moves[0].b];
       selected = null;
       setMessage("おすすめは白枠の①と②です。2個を選ぶと交換できます");
@@ -1226,7 +1114,6 @@
       launchedTotal = undoState.launchedTotal ?? 0;
       nextRiseTurn = undoState.nextRiseTurn ?? RISE_EVERY;
       undoState = null;
-      rotationAnchor = null;
       selected = null;
       hinted = [];
       setMessage("一手前に戻しました");
@@ -1285,8 +1172,6 @@
     }
 
     function newGame() {
-      rotationMode = false;
-      rotationAnchor = null;
       score = 0;
       turn = 0;
       launchedTotal = 0;
@@ -1319,11 +1204,6 @@
       if (action) action();
     });
 
-    rotateModeBtn.addEventListener("click", () => setRotationMode(!rotationMode));
-    swapModeBtn.addEventListener("click", () => setRotationMode(false));
-    rotateLeftBtn.addEventListener("click", () => rotateSelection(-1));
-    rotateRightBtn.addEventListener("click", () => rotateSelection(1));
-    fireBtn.addEventListener("click", fireReadyBlocks);
     undoBtn.addEventListener("click", undo);
     hintBtn.addEventListener("click", showHint);
     autoBtn.addEventListener("click", autoMove);
@@ -1336,7 +1216,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右の交換、または「2×2を選ぶ」→範囲の左上をタップ→左回転・右回転で仕込みます。交換も回転も1回1手です。<br><br><strong>3個そろっても点火待ち：</strong>白い枠と「待」が目印。複数箇所を仕込んで「発射」で一斉に飛ばせます。並びを崩すと点火待ちは解除されます。発射後の落下と連鎖は自動です。<br><br><strong>欲張りすぎに注意：</strong>仕込み3手ごとに下から1段追加。発射自体は手数を消費しません。交換・回転で揃う手も点火待ちもない時は自動補充します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。一度に3個以上飛ばすと次のせり上がりが1手遅れます。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>3個以上揃ったら即発射：</strong>発射ボタンはありません。揃った瞬間に自動で点火し、打ち上げ・落下・連鎖まで進みます。<br><br><strong>3手ごとにせり上がり：</strong>上端を空けながら${LAUNCH_GOAL}個の打ち上げを目指します。揃う交換がない時は自動で1段追加します。<br><br>一度に3個以上飛ばすと次のせり上がりが1手遅れます。`,
       "盤面に戻る"
     ));
 
@@ -1348,7 +1228,7 @@
       showDialog(`つづきから v${APP_VERSION}`, "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ", resumePlayableBoard);
     } else {
       newGame();
-      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを入れ替え、3個そろえましょう。<br>そろったら「発射」を押しましょう。発射後の落下と連鎖は自動です。", "ゲームを始める");
+      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを入れ替え、3個そろえましょう。<br>揃った瞬間に自動で発射し、落下と連鎖まで進みます。", "ゲームを始める");
     }
   </script>
 </body>
