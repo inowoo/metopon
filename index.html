@@ -155,10 +155,9 @@
     .cell.block { cursor: pointer; text-shadow: 0 2px 2px #0005; }
     .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
     .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
-    .cell.push-target {
-      box-shadow: inset 0 0 0 3px var(--accent), 0 0 15px #ffd34e66;
-      filter: brightness(1.16);
-    }
+    .cell.reroute-candidate { box-shadow: inset 0 0 0 3px var(--accent), 0 0 18px #ffd34e88; filter: brightness(1.18); }
+    .cell.reroute-source { box-shadow: 0 0 0 4px white, 0 0 22px white; z-index: 7; transform: scale(.9); }
+    .cell.reroute-target { box-shadow: inset 0 0 0 3px #fff, 0 0 14px #ffffff66; filter: brightness(1.12); }
     .cell.recommend {
       outline: 3px solid white;
       outline-offset: -1px;
@@ -330,7 +329,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.4</span>
+          <span id="versionBadge" class="version-badge">v0.8.5</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -352,14 +351,14 @@
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
         <br><span class="clear-rule">揃ったブロック＋その上を、上端の外まで一気に打ち上げ</span><br>
-        <span class="over-rule"><strong>PUSH</strong>：8個打ち上げると、好きな列を1段押し上げられる</span><br>
+        <span class="over-rule"><strong>介入</strong>：打ち上げ後、落下前に1個だけ別の列へ送れる</span><br>
         <span class="over-rule"><strong>BONUS</strong>：4個以上または2連鎖以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
       </div>
 
       <div class="controls">
         <button id="recommendBtn" class="control primary" type="button">◇ オススメ</button>
-        <button id="pushBtn" class="control" type="button">↑ PUSH 0/8</button>
+        <button id="interveneBtn" class="control" type="button" disabled>↔ 介入：発射後</button>
         <button id="undoBtn" class="control" type="button">↶ 一手戻す</button>
         <button id="speedBtn" class="control" type="button">» 早送り</button>
         <button id="newBtn" class="control" type="button">↻ 最初から</button>
@@ -374,11 +373,11 @@
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
         <li>揃ったブロックと<strong>その上に乗っているブロックをまとめて上端の外へ</strong>打ち上げる</li>
-        <li>8個打ち上げると<strong>PUSH</strong>が使え、好きな列を1段押し上げられる</li>
+        <li>打ち上げ後、落下するブロックを<strong>1個だけ別の列へ送れる</strong></li>
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
       </ol>
-      <p class="rule-note">考えている間は何も進みません。高い位置で揃えるほど上の塊もまとめて飛ばせます。PUSHが貯まったら、どの列へ介入するかを自分で選べます。</p>
+      <p class="rule-note">考えている間は何も進みません。打ち上げ後の落下前だけ、落ちるブロックを1個選んで別の列へ送れます。使わずそのまま落とすこともできます。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -399,13 +398,12 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.4";
+    const APP_VERSION = "0.8.5";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
     const RISE_EVERY = 3;
     const LAUNCH_GOAL = 30;
-    const PUSH_COST = 8;
     const SYMBOLS = ["●", "▲", "■", "★"];
     const NAMES = ["丸", "三角", "四角", "星"];
 
@@ -418,7 +416,7 @@
     const launchCountEl = document.getElementById("launchCount");
     const messageEl = document.getElementById("message");
     const recommendBtn = document.getElementById("recommendBtn");
-    const pushBtn = document.getElementById("pushBtn");
+    const interveneBtn = document.getElementById("interveneBtn");
     const undoBtn = document.getElementById("undoBtn");
     const speedBtn = document.getElementById("speedBtn");
     const newBtn = document.getElementById("newBtn");
@@ -431,8 +429,11 @@
     let board = emptyBoard();
     let selected = null;
     let recommended = [];
-    let pushCharge = 0;
-    let pushMode = false;
+    let rerouteMode = false;
+    let rerouteCandidates = [];
+    let rerouteSelected = null;
+    let rerouteResolve = null;
+    let rerouteUsedThisMove = false;
     let score = 0;
     let best = Number(localStorage.getItem("metopon-best") || 0);
     let turn = 0;
@@ -646,13 +647,11 @@
       riseEl.textContent = Math.max(0, nextRiseTurn - turn);
       launchCountEl.textContent = `${launchedTotal}/${LAUNCH_GOAL}`;
       const disabled = busy || gameOver || cleared;
-      recommendBtn.disabled = disabled || pushMode;
-      pushBtn.disabled = disabled || (pushCharge < PUSH_COST && !pushMode);
-      pushBtn.classList.toggle("active", pushMode);
-      pushBtn.textContent = pushCharge >= PUSH_COST
-        ? (pushMode ? "列を選択中" : "↑ PUSH READY")
-        : `↑ PUSH ${pushCharge}/${PUSH_COST}`;
-      undoBtn.disabled = disabled || !undoState || pushMode;
+      recommendBtn.disabled = disabled || rerouteMode;
+      interveneBtn.disabled = !rerouteMode;
+      interveneBtn.classList.toggle("active", rerouteMode);
+      interveneBtn.textContent = rerouteMode ? "介入しない" : "↔ 介入：発射後";
+      undoBtn.disabled = disabled || !undoState || rerouteMode;
       newBtn.disabled = busy;
       speedBtn.classList.toggle("active", fast);
     }
@@ -676,7 +675,11 @@
             cell.textContent = SYMBOLS[value];
             cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 ${NAMES[value]}`);
           }
-          if (pushMode) cell.classList.add("push-target");
+          if (rerouteMode) {
+            if (!rerouteSelected && rerouteCandidates.some(p => p.r === r && p.c === c)) cell.classList.add("reroute-candidate");
+            if (rerouteSelected && rerouteSelected.r === r && rerouteSelected.c === c) cell.classList.add("reroute-source");
+            if (rerouteSelected && c !== rerouteSelected.c && board.some(row => row[c] === null)) cell.classList.add("reroute-target");
+          }
           if (selected && selected.r === r && selected.c === c) cell.classList.add("selected");
           const recommendIndex = recommended.findIndex(p => p.r === r && p.c === c);
           if (recommendIndex >= 0) {
@@ -684,7 +687,7 @@
           }
           const extra = classes.get(key(r, c));
           if (extra) cell.classList.add(extra);
-          cell.disabled = gameOver || cleared || busy;
+          cell.disabled = gameOver || cleared || (busy && !rerouteMode);
           cell.addEventListener("click", onCellClick);
           boardEl.appendChild(cell);
         }
@@ -870,17 +873,18 @@
     }
 
     function saveUndo() {
-      undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn, pushCharge };
+      undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
     }
 
     async function onCellClick(event) {
       const r = Number(event.currentTarget.dataset.row);
       const c = Number(event.currentTarget.dataset.col);
-      if (busy || gameOver || cleared) return;
-      if (pushMode) {
-        await manualPushColumn(c);
+      if (gameOver || cleared) return;
+      if (rerouteMode) {
+        await handleRerouteClick(r, c);
         return;
       }
+      if (busy) return;
       if (!recommended.some(p => p.r === r && p.c === c)) recommended = [];
       if (!selected) {
         selected = { r, c };
@@ -900,76 +904,109 @@
       render();
     }
 
-    function togglePushMode() {
-      if (busy || gameOver || cleared) return;
-      if (pushMode) {
-        pushMode = false;
-        setMessage("PUSHをキャンセルしました");
+    function collectFallingCandidates() {
+      const out = [];
+      for (let c = 0; c < COLS; c++) {
+        let gapBelow = false;
+        for (let r = ROWS - 1; r >= 0; r--) {
+          if (board[r][c] === null) gapBelow = true;
+          else if (gapBelow) out.push({ r, c });
+        }
+      }
+      return out;
+    }
+
+    function hasRerouteDestination(source) {
+      for (let c = 0; c < COLS; c++) {
+        if (c !== source.c && board.some(row => row[c] === null)) return true;
+      }
+      return false;
+    }
+
+    function finishRerouteIntervention() {
+      const resolve = rerouteResolve;
+      rerouteMode = false;
+      rerouteCandidates = [];
+      rerouteSelected = null;
+      rerouteResolve = null;
+      render();
+      if (resolve) resolve();
+    }
+
+    function skipRerouteIntervention() {
+      if (!rerouteMode) return;
+      setMessage("介入せず、そのまま落下します");
+      finishRerouteIntervention();
+    }
+
+    function beginRerouteIntervention() {
+      if (rerouteUsedThisMove || gameOver || cleared) return Promise.resolve();
+      rerouteUsedThisMove = true;
+      rerouteCandidates = collectFallingCandidates().filter(hasRerouteDestination);
+      if (!rerouteCandidates.length) return Promise.resolve();
+
+      rerouteMode = true;
+      rerouteSelected = null;
+      selected = null;
+      recommended = [];
+      setMessage("介入チャンス：光っている落下ブロックを1個選ぶか、「介入しない」");
+      render();
+      return new Promise(resolve => { rerouteResolve = resolve; });
+    }
+
+    async function handleRerouteClick(r, c) {
+      if (!rerouteMode) return;
+
+      if (!rerouteSelected) {
+        const candidate = rerouteCandidates.find(p => p.r === r && p.c === c);
+        if (!candidate) {
+          setMessage("光っている落下ブロックを1個選んでください");
+          return;
+        }
+        rerouteSelected = { r, c };
+        setMessage("送り先の列をタップしてください");
         render();
         return;
       }
-      if (pushCharge < PUSH_COST) return;
-      pushMode = true;
-      selected = null;
-      recommended = [];
-      setMessage("PUSHする列をタップしてください");
-      render();
-    }
 
-    async function manualPushColumn(c) {
-      if (!pushMode || pushCharge < PUSH_COST || busy || gameOver || cleared) return;
-
-      saveUndo();
-      busy = true;
-      pushMode = false;
-      pushCharge -= PUSH_COST;
-      selected = null;
-      recommended = [];
-
-      const moves = [];
-      const topValue = board[0][c];
-
-      for (let r = 0; r < ROWS - 1; r++) {
-        const value = board[r + 1][c];
-        board[r][c] = value;
-        if (value !== null) {
-          moves.push({ from: { r: r + 1, c }, to: { r, c }, value });
-        }
-      }
-
-      const newValue = randomType();
-      board[ROWS - 1][c] = newValue;
-      moves.push({ from: { r: ROWS, c }, to: { r: ROWS - 1, c }, value: newValue });
-
-      if (topValue !== null) {
-        moves.push({ from: { r: 0, c }, to: { r: -1, c }, value: topValue, matched: true });
-        launchedTotal++;
-        score += 45;
-      }
-
-      setMessage(`${c + 1}列をPUSH！`, "combo");
-      await animateMoves(moves, "rise", 900);
-
-      if (launchedTotal >= LAUNCH_GOAL) {
-        clearGame();
+      if (c === rerouteSelected.c) {
+        rerouteSelected = null;
+        setMessage("落下ブロックを選び直してください");
+        render();
         return;
       }
 
-      if (findMatches().size) {
-        riseBonusGrantedThisMove = false;
-        await resolveBoard();
-        if (gameOver || cleared) return;
+      const emptyRows = [];
+      for (let tr = 0; tr < ROWS; tr++) if (board[tr][c] === null) emptyRows.push(tr);
+      if (!emptyRows.length) {
+        setMessage("その列には空きがありません");
+        return;
       }
 
-      if (score > best) {
-        best = score;
-        localStorage.setItem("metopon-best", String(best));
+      const source = { ...rerouteSelected };
+      const value = board[source.r][source.c];
+      if (value === null) {
+        finishRerouteIntervention();
+        return;
       }
 
-      busy = false;
-      describeReadyBoard();
-      render();
-      saveGame();
+      let targetRow = emptyRows[0];
+      for (const tr of emptyRows) {
+        if (Math.abs(tr - source.r) < Math.abs(targetRow - source.r)) targetRow = tr;
+      }
+
+      board[source.r][source.c] = null;
+      board[targetRow][c] = value;
+
+      rerouteMode = false;
+      rerouteCandidates = [];
+      rerouteSelected = null;
+      setMessage(`${source.c + 1}列のブロックを${c + 1}列へ移動！`, "combo");
+      await animateMoves([{ from: source, to: { r: targetRow, c }, value }], "swap", 560);
+
+      const resolve = rerouteResolve;
+      rerouteResolve = null;
+      if (resolve) resolve();
     }
 
     function describeReadyBoard() {
@@ -996,7 +1033,7 @@
     async function resumePlayableBoard() {
       if (busy || gameOver || cleared) return;
       busy = true;
-      pushMode = false;
+      rerouteUsedThisMove = false;
       selected = null;
       recommended = [];
       riseBonusGrantedThisMove = false;
@@ -1037,7 +1074,7 @@
       if (Math.abs(a.r - b.r) + Math.abs(a.c - b.c) !== 1) return;
       saveUndo();
       busy = true;
-      pushMode = false;
+      rerouteUsedThisMove = false;
       riseBonusGrantedThisMove = false;
       selected = null;
       recommended = [];
@@ -1124,7 +1161,6 @@
         }
 
         launchedTotal += launchedOut;
-        pushCharge = Math.min(PUSH_COST, pushCharge + launchedOut);
 
         if (score > best) {
           best = score;
@@ -1149,6 +1185,9 @@
         }
 
         await wait(220);
+
+        await beginRerouteIntervention();
+        if (gameOver || cleared) break;
 
         const fallMoves = applyGravity();
         await animateMoves(fallMoves, "fall", 980);
@@ -1210,8 +1249,11 @@
       turn = undoState.turn;
       launchedTotal = undoState.launchedTotal ?? 0;
       nextRiseTurn = undoState.nextRiseTurn ?? RISE_EVERY;
-      pushCharge = Number.isFinite(undoState.pushCharge) ? undoState.pushCharge : pushCharge;
-      pushMode = false;
+      rerouteMode = false;
+      rerouteCandidates = [];
+      rerouteSelected = null;
+      rerouteResolve = null;
+      rerouteUsedThisMove = false;
       undoState = null;
       selected = null;
       recommended = [];
@@ -1245,7 +1287,7 @@
 
     function saveGame() {
       if (gameOver || cleared) return;
-      localStorage.setItem("metopon-save", JSON.stringify({ board, score, turn, launchedTotal, nextRiseTurn, pushCharge }));
+      localStorage.setItem("metopon-save", JSON.stringify({ board, score, turn, launchedTotal, nextRiseTurn }));
     }
 
     function loadGame() {
@@ -1256,8 +1298,6 @@
           score = Number(saved.score) || 0;
           turn = Number(saved.turn) || 0;
           launchedTotal = Number(saved.launchedTotal) || 0;
-          pushCharge = Math.max(0, Math.min(PUSH_COST, Number(saved.pushCharge) || 0));
-          pushMode = false;
           if (Number(saved.nextRiseTurn) > turn) {
             nextRiseTurn = Number(saved.nextRiseTurn);
           } else {
@@ -1278,8 +1318,11 @@
       launchedTotal = 0;
       nextRiseTurn = RISE_EVERY;
       riseBonusGrantedThisMove = false;
-      pushCharge = 0;
-      pushMode = false;
+      rerouteMode = false;
+      rerouteCandidates = [];
+      rerouteSelected = null;
+      rerouteResolve = null;
+      rerouteUsedThisMove = false;
       gameOver = false;
       cleared = false;
       busy = false;
@@ -1308,7 +1351,7 @@
     });
 
     recommendBtn.addEventListener("click", showRecommendation);
-    pushBtn.addEventListener("click", togglePushMode);
+    interveneBtn.addEventListener("click", skipRerouteIntervention);
     undoBtn.addEventListener("click", undo);
     speedBtn.addEventListener("click", () => {
       fast = !fast;
@@ -1319,7 +1362,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個以上揃うと、揃ったブロックとその上に乗っているブロックをひとかたまりで上端の外まで打ち上げます。途中でブロックだけ消えたり、上のブロックを追い越したりしません。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>PUSH：</strong>打ち上げ8個で1回使えます。PUSHを押してから好きな列をタップすると、その列だけ1段せり上がります。通常の手数は消費せず、そこで揃えば即発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個以上揃うと、揃ったブロックとその上に乗っているブロックをひとかたまりで上端の外まで打ち上げます。途中でブロックだけ消えたり、上のブロックを追い越したりしません。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>落下介入：</strong>打ち上げ後・落下前に1回だけ、落ちる予定のブロックを1個選んで別の列へ送れます。介入しない場合はボタンでそのまま落下へ進めます。移動後に落下し、揃えば自動連鎖します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
       "盤面に戻る"
     ));
 
@@ -1331,7 +1374,7 @@
       showDialog(`つづきから v${APP_VERSION}`, "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ", resumePlayableBoard);
     } else {
       newGame();
-      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>打ち上げるとPUSHが貯まり、好きな列へ介入できます。", "ゲームを始める");
+      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>打ち上げ後の落下前に、ブロック1個を別の列へ送って連鎖を仕込めます。", "ゲームを始める");
     }
   </script>
 </body>
