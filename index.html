@@ -163,7 +163,7 @@
     }
     .cell.boost-choice {
       z-index: 5;
-      animation: boostChoice .5s ease-in-out infinite alternate;
+      animation: boostChoice .5s ease-in-out 6 alternate;
       box-shadow: 0 0 0 4px #fff, 0 0 30px #ffd34e;
     }
     .cell.boost-choice::after {
@@ -402,7 +402,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.5.0";
+    const APP_VERSION = "0.5.1";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -812,7 +812,28 @@
       undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
     }
 
-    function finishBoostChoice(column) {
+    function estimateBoostValue(matches, column) {
+      let topMatchRow = ROWS;
+      for (const position of matches) {
+        const [r, c] = position.split(",").map(Number);
+        if (c === column && r < topMatchRow) topMatchRow = r;
+      }
+
+      const thrust = thrustFor(matches, column) + 2;
+      let launched = 0;
+      let moved = 0;
+      for (let r = 0; r < topMatchRow; r++) {
+        if (board[r][column] === null) continue;
+        moved++;
+        if (r - thrust < 0) launched++;
+      }
+
+      // まず実際に盤面外へ飛ばせる数を優先し、
+      // 同数なら動かせるブロック数が多い列を選ぶ。
+      return launched * 100 + moved;
+    }
+
+    function finishBoostChoice(column, reason = "player") {
       if (!boostMode || !boostColumns.includes(column)) return;
 
       boostMode = false;
@@ -820,7 +841,10 @@
       boostHighlighted = new Set();
       const resolve = boostResolver;
       boostResolver = null;
-      setMessage(`BOOST：${column + 1}列目を+2マス強化します`, "combo");
+
+      const prefix = reason === "timeout" ? "BOOST自動選択" :
+        reason === "single" ? "BOOST自動決定" : "BOOST";
+      setMessage(`${prefix}：${column + 1}列目を+2マス強化します`, "combo");
       render();
 
       if (resolve) resolve(column);
@@ -833,20 +857,44 @@
       if (columns.length === 0) return Promise.resolve(null);
 
       boostUsedThisMove = true;
+
+      // 縦マッチなど、候補が1列しかない場合は選ぶ意味がないので自動で決める。
+      if (columns.length === 1) {
+        return new Promise(resolve => {
+          boostMode = true;
+          boostColumns = columns;
+          boostHighlighted = new Set(matches);
+          boostResolver = resolve;
+          setMessage("BOOST候補は1列だけ。この列を+2マス強化します", "combo");
+          render();
+          setTimeout(() => finishBoostChoice(columns[0], "single"), 650);
+        });
+      }
+
       boostMode = true;
       boostColumns = columns;
       boostHighlighted = new Set(matches);
 
-      setMessage(
-        columns.length === 1
-          ? "介入：光っているブロックを押してBOOST発射（この列を+2マス）"
-          : "介入：光っているブロックからBOOSTする列を1つ選んでください（+2マス）",
-        "combo"
-      );
+      setMessage("介入：光っている列からBOOSTする列を選んでください（4秒で自動選択）", "combo");
       render();
 
       return new Promise(resolve => {
         boostResolver = resolve;
+
+        setTimeout(() => {
+          if (!boostMode || boostResolver !== resolve) return;
+
+          let bestColumn = columns[0];
+          let bestValue = estimateBoostValue(matches, bestColumn);
+          for (const column of columns.slice(1)) {
+            const value = estimateBoostValue(matches, column);
+            if (value > bestValue) {
+              bestColumn = column;
+              bestValue = value;
+            }
+          }
+          finishBoostChoice(bestColumn, "timeout");
+        }, 4000);
       });
     }
 
