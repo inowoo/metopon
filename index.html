@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#10182d">
+  <title>METOPON - 打ち上げ連鎖パズル</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08101f;
+      --panel: #111d35;
+      --panel-2: #172745;
+      --text: #f5f7ff;
+      --muted: #adbbd4;
+      --accent: #ffd34e;
+      --danger: #ff6b79;
+      --cell-gap: clamp(4px, 1vw, 7px);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100svh;
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+      background:
+        radial-gradient(circle at 18% 8%, #253d72 0, transparent 34%),
+        radial-gradient(circle at 88% 88%, #34205b 0, transparent 30%),
+        var(--bg);
+      display: flex;
+      justify-content: center;
+      padding: max(12px, env(safe-area-inset-top)) 12px max(18px, env(safe-area-inset-bottom));
+    }
+
+    button { font: inherit; }
+
+    .app {
+      width: min(100%, 820px);
+      display: grid;
+      grid-template-columns: minmax(280px, 470px) minmax(210px, 290px);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .game-panel, .side-panel {
+      border: 1px solid #30456d;
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      box-shadow: 0 18px 50px #0008;
+      border-radius: var(--radius);
+    }
+
+    .game-panel { padding: 14px; }
+    .side-panel { padding: 16px; position: sticky; top: 12px; }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    h1 { margin: 0; font-size: clamp(24px, 6vw, 36px); letter-spacing: .04em; }
+    h1 span { color: var(--accent); }
+    .tagline { color: var(--muted); font-size: 12px; text-align: right; }
+
+    .status {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 7px;
+      margin-bottom: 10px;
+    }
+
+    .status-item {
+      background: #0b1529;
+      border: 1px solid #2b4168;
+      border-radius: 11px;
+      padding: 7px 4px;
+      text-align: center;
+    }
+
+    .status-label { display: block; color: var(--muted); font-size: 10px; }
+    .status-value { display: block; font-size: clamp(15px, 4vw, 21px); font-weight: 800; }
+
+    .board-wrap {
+      position: relative;
+      padding: 9px;
+      border: 2px solid #435d8a;
+      border-radius: 15px;
+      background: linear-gradient(#0a1326, #111b31);
+      overflow: hidden;
+    }
+
+    .danger-line {
+      position: absolute;
+      z-index: 3;
+      top: calc(9px + (100% - 18px) / 10);
+      left: 5px;
+      right: 5px;
+      height: 2px;
+      pointer-events: none;
+      background: repeating-linear-gradient(90deg, var(--danger) 0 9px, transparent 9px 15px);
+      opacity: .65;
+    }
+
+    .board {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: var(--cell-gap);
+      aspect-ratio: 6 / 10;
+      touch-action: manipulation;
+    }
+
+    .cell {
+      position: relative;
+      min-width: 0;
+      border: 0;
+      border-radius: 24%;
+      background: #16223a;
+      box-shadow: inset 0 0 0 1px #243657;
+      color: white;
+      display: grid;
+      place-items: center;
+      font-weight: 900;
+      font-size: clamp(17px, 6vw, 34px);
+      line-height: 1;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      transition: transform .16s ease, filter .16s ease, opacity .16s ease, box-shadow .16s ease;
+    }
+
+    .cell.block { cursor: pointer; text-shadow: 0 2px 2px #0005; }
+    .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
+    .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
+    .cell.hint { animation: hintPulse .7s ease-in-out 3; z-index: 2; }
+    .cell.match { animation: ignite .34s ease-in-out 2; z-index: 2; }
+    .cell.launch { animation: launch .38s ease-out; z-index: 2; }
+    .cell.fall { animation: fall .3s ease-out; }
+    .cell.empty { color: transparent; }
+
+    .type-0 { background: #3a7bd5; border: 2px solid #9fcaff; }
+    .type-1 { background: #d55353; border: 2px dashed #ffd0c8; }
+    .type-2 { background: #a360d0; border: 2px double #f1c5ff; }
+    .type-3 { background: #d08b24; border: 2px dotted #fff0a5; }
+
+    @keyframes hintPulse { 50% { box-shadow: 0 0 0 4px var(--accent), 0 0 22px var(--accent); transform: scale(.9); } }
+    @keyframes ignite { 50% { transform: scale(.72) rotate(8deg); filter: brightness(1.7); } }
+    @keyframes launch { from { transform: translateY(38%); } to { transform: translateY(0); } }
+    @keyframes fall { from { transform: translateY(-32%); } to { transform: translateY(0); } }
+
+    .message {
+      min-height: 44px;
+      margin-top: 10px;
+      border-radius: 12px;
+      background: #0b1529;
+      color: #dce6fb;
+      display: grid;
+      place-items: center;
+      padding: 8px 12px;
+      text-align: center;
+      font-weight: 700;
+    }
+
+    .message.combo { color: var(--accent); }
+    .message.danger { color: #ffadb5; background: #311725; }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .control {
+      border: 1px solid #49638f;
+      border-radius: 11px;
+      padding: 10px 5px;
+      color: var(--text);
+      background: #1d3155;
+      cursor: pointer;
+      font-weight: 750;
+    }
+
+    .control:hover:not(:disabled) { background: #29436f; }
+    .control:active:not(:disabled) { transform: translateY(1px); }
+    .control:disabled { opacity: .35; cursor: default; }
+    .control.primary { background: #76591a; border-color: #b68a28; }
+    .control.active { box-shadow: inset 0 0 0 2px var(--accent); color: var(--accent); }
+
+    h2 { margin: 0 0 10px; font-size: 18px; }
+    .howto { margin: 0; padding-left: 1.35em; color: #d7e0f1; line-height: 1.65; font-size: 14px; }
+    .howto strong { color: var(--accent); }
+    .rule-note { margin: 14px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+    .legend { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 14px; }
+    .legend-item { text-align: center; font-size: 12px; color: var(--muted); }
+    .legend-icon { display: grid; place-items: center; aspect-ratio: 1; border-radius: 25%; color: white; font-size: 22px; font-weight: 900; margin-bottom: 3px; }
+
+    .overlay {
+      position: fixed;
+      z-index: 20;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: #040812d9;
+    }
+
+    .overlay[hidden] { display: none; }
+    .dialog {
+      width: min(100%, 430px);
+      padding: 24px;
+      border: 1px solid #4c6794;
+      border-radius: 20px;
+      background: #13213b;
+      box-shadow: 0 30px 80px #000b;
+      text-align: center;
+    }
+
+    .dialog h2 { font-size: 27px; }
+    .dialog p { color: #ced8ed; line-height: 1.7; }
+    .dialog .control { width: 100%; font-size: 17px; }
+
+    @media (max-width: 690px) {
+      body { padding-left: 8px; padding-right: 8px; }
+      .app { grid-template-columns: 1fr; max-width: 470px; }
+      .side-panel { position: static; }
+      .game-panel { padding: 10px; }
+      .side-panel { padding: 14px; }
+      .tagline { display: none; }
+      .controls { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="game-panel" aria-label="METOPONゲーム">
+      <header>
+        <h1>METO<span>PON</span></h1>
+        <div class="tagline">一手を選んで、あとは見守る。</div>
+      </header>
+
+      <div class="status" aria-label="ゲーム状況">
+        <div class="status-item"><span class="status-label">SCORE</span><span class="status-value" id="score">0</span></div>
+        <div class="status-item"><span class="status-label">BEST</span><span class="status-value" id="best">0</span></div>
+        <div class="status-item"><span class="status-label">TURN</span><span class="status-value" id="turn">0</span></div>
+        <div class="status-item"><span class="status-label">RISE</span><span class="status-value" id="rise">3</span></div>
+      </div>
+
+      <div class="board-wrap">
+        <div class="danger-line" aria-hidden="true"></div>
+        <div id="board" class="board" role="grid" aria-label="6列10行のゲーム盤"></div>
+      </div>
+
+      <div id="message" class="message" aria-live="polite">左右に並んだブロックを選んでください</div>
+
+      <div class="controls">
+        <button id="undoBtn" class="control" type="button">↶ 一手戻す</button>
+        <button id="hintBtn" class="control" type="button">◇ ヒント</button>
+        <button id="autoBtn" class="control primary" type="button">▶ おまかせ</button>
+        <button id="speedBtn" class="control" type="button">» 早送り</button>
+        <button id="newBtn" class="control" type="button">↻ 最初から</button>
+        <button id="helpBtn" class="control" type="button">? 遊び方</button>
+      </div>
+    </section>
+
+    <aside class="side-panel">
+      <h2>遊び方</h2>
+      <ol class="howto">
+        <li>ブロックを<strong>2個選んで横交換</strong></li>
+        <li>同じ記号を縦か横に<strong>3個</strong>そろえる</li>
+        <li>マッチした列が自動で<strong>打ち上がる</strong></li>
+        <li>落下後のマッチも自動で<strong>連鎖</strong></li>
+        <li><strong>3手ごと</strong>に下から1段追加</li>
+      </ol>
+      <p class="rule-note">考えている間は何も進みません。上の点線を越えないように、ブロックを宇宙へ飛ばしましょう。困った時は「ヒント」か「おまかせ」が使えます。</p>
+      <div class="legend" aria-label="ブロックの種類">
+        <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
+        <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
+        <div class="legend-item"><div class="legend-icon type-2">■</div>四角</div>
+        <div class="legend-item"><div class="legend-icon type-3">★</div>星</div>
+      </div>
+    </aside>
+  </main>
+
+  <div id="overlay" class="overlay">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
+      <h2 id="dialogTitle">METOPON</h2>
+      <p id="dialogText">隣り合うブロックを横に入れ替え、3個そろえましょう。<br>その後の打ち上げと連鎖は、ゲームが自動で進めます。</p>
+      <button id="dialogBtn" class="control primary" type="button">ゲームを始める</button>
+    </div>
+  </div>
+
+  <script>
+    "use strict";
+
+    const ROWS = 10;
+    const COLS = 6;
+    const TYPES = 4;
+    const RISE_EVERY = 3;
+    const SYMBOLS = ["●", "▲", "■", "★"];
+    const NAMES = ["丸", "三角", "四角", "星"];
+
+    const boardEl = document.getElementById("board");
+    const scoreEl = document.getElementById("score");
+    const bestEl = document.getElementById("best");
+    const turnEl = document.getElementById("turn");
+    const riseEl = document.getElementById("rise");
+    const messageEl = document.getElementById("message");
+    const undoBtn = document.getElementById("undoBtn");
+    const hintBtn = document.getElementById("hintBtn");
+    const autoBtn = document.getElementById("autoBtn");
+    const speedBtn = document.getElementById("speedBtn");
+    const newBtn = document.getElementById("newBtn");
+    const helpBtn = document.getElementById("helpBtn");
+    const overlay = document.getElementById("overlay");
+    const dialogTitle = document.getElementById("dialogTitle");
+    const dialogText = document.getElementById("dialogText");
+    const dialogBtn = document.getElementById("dialogBtn");
+
+    let board = emptyBoard();
+    let selected = null;
+    let score = 0;
+    let best = Number(localStorage.getItem("metopon-best") || 0);
+    let turn = 0;
+    let busy = false;
+    let fast = false;
+    let gameOver = false;
+    let undoState = null;
+    let hinted = [];
+    let dialogAction = null;
+
+    function emptyBoard() {
+      return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+    }
+
+    function copyBoard(source = board) {
+      return source.map(row => [...row]);
+    }
+
+    function randomType() {
+      return Math.floor(Math.random() * TYPES);
+    }
+
+    function key(r, c) {
+      return `${r},${c}`;
+    }
+
+    function wait(ms) {
+      return new Promise(resolve => setTimeout(resolve, fast ? Math.min(ms, 45) : ms));
+    }
+
+    function setMessage(text, mode = "") {
+      messageEl.textContent = text;
+      messageEl.className = `message ${mode}`.trim();
+    }
+
+    function updateStatus() {
+      scoreEl.textContent = score.toLocaleString("ja-JP");
+      bestEl.textContent = best.toLocaleString("ja-JP");
+      turnEl.textContent = turn;
+      const remainder = turn % RISE_EVERY;
+      riseEl.textContent = remainder === 0 ? RISE_EVERY : RISE_EVERY - remainder;
+      const disabled = busy || gameOver;
+      hintBtn.disabled = disabled;
+      autoBtn.disabled = disabled;
+      undoBtn.disabled = disabled || !undoState;
+      newBtn.disabled = busy;
+      speedBtn.classList.toggle("active", fast);
+    }
+
+    function render(classes = new Map()) {
+      boardEl.replaceChildren();
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const value = board[r][c];
+          const cell = document.createElement("button");
+          cell.type = "button";
+          cell.className = "cell";
+          cell.dataset.row = r;
+          cell.dataset.col = c;
+          cell.setAttribute("role", "gridcell");
+          if (value === null) {
+            cell.classList.add("empty");
+            cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 空き`);
+          } else {
+            cell.classList.add("block", `type-${value}`);
+            cell.textContent = SYMBOLS[value];
+            cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 ${NAMES[value]}`);
+          }
+          if (selected && selected.r === r && selected.c === c) cell.classList.add("selected");
+          if (hinted.some(p => p.r === r && p.c === c)) cell.classList.add("hint");
+          const extra = classes.get(key(r, c));
+          if (extra) cell.classList.add(extra);
+          cell.disabled = busy || gameOver;
+          cell.addEventListener("click", onCellClick);
+          boardEl.appendChild(cell);
+        }
+      }
+      updateStatus();
+    }
+
+    function fillInitialBoard() {
+      board = emptyBoard();
+      for (let r = 5; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          let value;
+          let guard = 0;
+          do {
+            value = randomType();
+            guard++;
+          } while (guard < 20 && (
+            (c >= 2 && board[r][c - 1] === value && board[r][c - 2] === value) ||
+            (r >= 2 && board[r - 1][c] === value && board[r - 2][c] === value)
+          ));
+          board[r][c] = value;
+        }
+      }
+      ensureMove();
+    }
+
+    function swapOn(target, a, b) {
+      [target[a.r][a.c], target[b.r][b.c]] = [target[b.r][b.c], target[a.r][a.c]];
+    }
+
+    function findMatches(target = board) {
+      const matches = new Set();
+      for (let r = 0; r < ROWS; r++) {
+        let start = 0;
+        for (let c = 1; c <= COLS; c++) {
+          if (c < COLS && target[r][c] !== null && target[r][c] === target[r][start]) continue;
+          if (target[r][start] !== null && c - start >= 3) {
+            for (let x = start; x < c; x++) matches.add(key(r, x));
+          }
+          start = c;
+        }
+      }
+      for (let c = 0; c < COLS; c++) {
+        let start = 0;
+        for (let r = 1; r <= ROWS; r++) {
+          if (r < ROWS && target[r][c] !== null && target[r][c] === target[start][c]) continue;
+          if (target[start]?.[c] !== null && r - start >= 3) {
+            for (let y = start; y < r; y++) matches.add(key(y, c));
+          }
+          start = r;
+        }
+      }
+      return matches;
+    }
+
+    function possibleMoves() {
+      const moves = [];
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS - 1; c++) {
+          if (board[r][c] === null && board[r][c + 1] === null) continue;
+          const test = copyBoard();
+          const a = { r, c };
+          const b = { r, c: c + 1 };
+          swapOn(test, a, b);
+          if (findMatches(test).size > 0) moves.push({ a, b });
+        }
+      }
+      return moves;
+    }
+
+    function ensureMove() {
+      if (findMatches().size === 0 && possibleMoves().length > 0) return true;
+      let attempts = 0;
+      while (attempts < 100) {
+        const values = board.flat().filter(v => v !== null);
+        for (let i = values.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [values[i], values[j]] = [values[j], values[i]];
+        }
+        let index = 0;
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (board[r][c] !== null) board[r][c] = values[index++];
+          }
+        }
+        attempts++;
+        if (findMatches().size === 0 && possibleMoves().length > 0) return true;
+      }
+      return false;
+    }
+
+    function saveUndo() {
+      undoState = { board: copyBoard(), score, turn };
+    }
+
+    async function onCellClick(event) {
+      if (busy || gameOver) return;
+      const r = Number(event.currentTarget.dataset.row);
+      const c = Number(event.currentTarget.dataset.col);
+      hinted = [];
+
+      if (!selected) {
+        selected = { r, c };
+        setMessage("左右どちらかのブロックを選んでください");
+        render();
+        return;
+      }
+
+      if (selected.r === r && selected.c === c) {
+        selected = null;
+        setMessage("選択を解除しました");
+        render();
+        return;
+      }
+
+      if (selected.r !== r || Math.abs(selected.c - c) !== 1) {
+        selected = { r, c };
+        setMessage("交換するブロックを選び直しました");
+        render();
+        return;
+      }
+
+      const a = selected;
+      selected = null;
+      await makeMove(a, { r, c });
+    }
+
+    async function makeMove(a, b) {
+      if (busy || gameOver) return;
+      saveUndo();
+      busy = true;
+      hinted = [];
+      swapOn(board, a, b);
+      turn++;
+      setMessage("交換しました。結果を計算中…");
+      render();
+      await wait(180);
+
+      const chain = await resolveBoard();
+      if (chain === 0) setMessage("マッチなし。次の一手をどうぞ");
+
+      if (turn % RISE_EVERY === 0 && !gameOver) {
+        await addRow();
+        if (!gameOver) await resolveBoard();
+      }
+
+      if (!gameOver) {
+        if (possibleMoves().length === 0) {
+          setMessage("手詰まりなので自動で並べ替えます");
+          await wait(420);
+          ensureMove();
+          render();
+        }
+        if (!messageEl.classList.contains("combo")) {
+          setMessage("盤面停止中。ゆっくり次の一手を選べます");
+        }
+      }
+
+      busy = false;
+      render();
+      saveGame();
+    }
+
+    function thrustFor(matches, column) {
+      const count = [...matches].filter(value => Number(value.split(",")[1]) === column).length;
+      if (count >= 5) return 6;
+      if (count === 4) return 4;
+      return count >= 1 ? 2 : 0;
+    }
+
+    async function resolveBoard() {
+      let chain = 0;
+      while (!gameOver && chain < 30) {
+        const matches = findMatches();
+        if (matches.size === 0) break;
+        chain++;
+        const matchClasses = new Map([...matches].map(position => [position, "match"]));
+        setMessage(chain === 1 ? `${matches.size}個マッチ！` : `${chain}連鎖！`, "combo");
+        render(matchClasses);
+        await wait(420);
+
+        const affected = new Map();
+        for (const position of matches) {
+          const [r, c] = position.split(",").map(Number);
+          if (!affected.has(c) || r < affected.get(c)) affected.set(c, r);
+        }
+
+        for (const position of matches) {
+          const [r, c] = position.split(",").map(Number);
+          board[r][c] = null;
+        }
+
+        let launchedOut = 0;
+        const launchClasses = new Map();
+        for (const [c, topMatchRow] of affected) {
+          const thrust = thrustFor(matches, c);
+          const moving = [];
+          for (let r = 0; r < topMatchRow; r++) {
+            if (board[r][c] !== null) moving.push({ r, value: board[r][c] });
+            board[r][c] = null;
+          }
+          for (const item of moving) {
+            const nr = item.r - thrust;
+            if (nr < 0) {
+              launchedOut++;
+            } else {
+              board[nr][c] = item.value;
+              launchClasses.set(key(nr, c), "launch");
+            }
+          }
+        }
+
+        const gained = (matches.size * 10 + launchedOut * 35) * chain;
+        score += gained;
+        if (score > best) {
+          best = score;
+          localStorage.setItem("metopon-best", String(best));
+        }
+        setMessage(launchedOut > 0 ? `${chain}連鎖・${launchedOut}個を宇宙へ！ +${gained}` : `${chain}連鎖！ +${gained}`, "combo");
+        render(launchClasses);
+        await wait(400);
+
+        applyGravity();
+        const fallClasses = new Map();
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (board[r][c] !== null) fallClasses.set(key(r, c), "fall");
+          }
+        }
+        render(fallClasses);
+        await wait(300);
+      }
+      return chain;
+    }
+
+    function applyGravity() {
+      for (let c = 0; c < COLS; c++) {
+        const values = [];
+        for (let r = ROWS - 1; r >= 0; r--) {
+          if (board[r][c] !== null) values.push(board[r][c]);
+        }
+        for (let r = ROWS - 1, i = 0; r >= 0; r--, i++) {
+          board[r][c] = i < values.length ? values[i] : null;
+        }
+      }
+    }
+
+    async function addRow() {
+      setMessage("3手経過。下から新しい段がせり上がります", "danger");
+      await wait(520);
+      if (board[0].some(value => value !== null)) {
+        endGame();
+        return;
+      }
+      board.shift();
+      const row = [];
+      for (let c = 0; c < COLS; c++) {
+        let value;
+        let guard = 0;
+        do {
+          value = randomType();
+          guard++;
+        } while (guard < 12 && c >= 2 && row[c - 1] === value && row[c - 2] === value);
+        row.push(value);
+      }
+      board.push(row);
+      render();
+      await wait(350);
+    }
+
+    function showHint() {
+      if (busy || gameOver) return;
+      const moves = possibleMoves();
+      if (moves.length === 0) {
+        setMessage("今すぐマッチできる手はありません");
+        return;
+      }
+      const move = moves[Math.floor(Math.random() * moves.length)];
+      hinted = [move.a, move.b];
+      selected = null;
+      setMessage("光っている2個を交換するとマッチします");
+      render();
+    }
+
+    async function autoMove() {
+      if (busy || gameOver) return;
+      const moves = possibleMoves();
+      if (moves.length === 0) {
+        setMessage("候補がないため、自動で並べ替えます");
+        ensureMove();
+        render();
+        return;
+      }
+      const move = moves[Math.floor(Math.random() * moves.length)];
+      setMessage("おまかせで1手進めます");
+      await makeMove(move.a, move.b);
+    }
+
+    function undo() {
+      if (!undoState || busy || gameOver) return;
+      board = undoState.board.map(row => [...row]);
+      score = undoState.score;
+      turn = undoState.turn;
+      undoState = null;
+      selected = null;
+      hinted = [];
+      setMessage("一手前に戻しました");
+      render();
+      saveGame();
+    }
+
+    function endGame() {
+      gameOver = true;
+      busy = false;
+      setMessage("盤面がいっぱいになりました", "danger");
+      render();
+      localStorage.removeItem("metopon-save");
+      showDialog("ゲームオーバー", `スコアは <strong>${score.toLocaleString("ja-JP")}</strong> 点でした。<br>急がなくても大丈夫。次は別の一手を試してみましょう。`, "もう一度遊ぶ", newGame);
+    }
+
+    function saveGame() {
+      if (gameOver) return;
+      localStorage.setItem("metopon-save", JSON.stringify({ board, score, turn }));
+    }
+
+    function loadGame() {
+      try {
+        const saved = JSON.parse(localStorage.getItem("metopon-save"));
+        if (saved && Array.isArray(saved.board) && saved.board.length === ROWS) {
+          board = saved.board;
+          score = Number(saved.score) || 0;
+          turn = Number(saved.turn) || 0;
+          return true;
+        }
+      } catch (_) {
+        localStorage.removeItem("metopon-save");
+      }
+      return false;
+    }
+
+    function newGame() {
+      score = 0;
+      turn = 0;
+      gameOver = false;
+      busy = false;
+      selected = null;
+      hinted = [];
+      undoState = null;
+      fillInitialBoard();
+      setMessage("左右に並んだブロックを選んでください");
+      render();
+      saveGame();
+    }
+
+    function showDialog(title, html, label, action = null) {
+      dialogTitle.textContent = title;
+      dialogText.innerHTML = html;
+      dialogBtn.textContent = label;
+      dialogAction = action;
+      overlay.hidden = false;
+    }
+
+    dialogBtn.addEventListener("click", () => {
+      overlay.hidden = true;
+      const action = dialogAction;
+      dialogAction = null;
+      if (action) action();
+    });
+
+    undoBtn.addEventListener("click", undo);
+    hintBtn.addEventListener("click", showHint);
+    autoBtn.addEventListener("click", autoMove);
+    speedBtn.addEventListener("click", () => {
+      fast = !fast;
+      setMessage(fast ? "自動連鎖を早送りします" : "通常の演出速度に戻しました");
+      render();
+    });
+    newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
+    helpBtn.addEventListener("click", () => showDialog("遊び方", "横に並んだ2個を交換し、同じ記号を縦か横に3個そろえます。<br>交換後の打ち上げ・落下・連鎖はすべて自動です。考えている間は盤面が動きません。", "盤面に戻る"));
+
+    bestEl.textContent = best.toLocaleString("ja-JP");
+    if (loadGame()) {
+      render();
+      showDialog("つづきから", "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ");
+    } else {
+      newGame();
+      showDialog("METOPON", "隣り合うブロックを横に入れ替え、3個そろえましょう。<br>その後の打ち上げと連鎖は、ゲームが自動で進めます。", "ゲームを始める");
+    }
+  </script>
+</body>
+</html>
