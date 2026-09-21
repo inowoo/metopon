@@ -155,7 +155,35 @@
     .cell.block { cursor: pointer; text-shadow: 0 2px 2px #0005; }
     .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
     .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
-    .cell.hint { animation: hintPulse .7s ease-in-out 3; z-index: 2; }
+    .board .cell.hint {
+      outline: 3px solid white;
+      outline-offset: -1px;
+      box-shadow: 0 0 0 5px #08101f, 0 0 18px 5px #ffffffaa;
+      animation: hintPulse 1.1s ease-in-out infinite;
+      z-index: 6;
+      filter: brightness(1.2);
+    }
+    .cell.hint::after {
+      content: attr(data-hint-order);
+      position: absolute;
+      top: -7px;
+      left: -6px;
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border: 2px solid #08101f;
+      border-radius: 50%;
+      background: white;
+      color: #08101f;
+      font-size: 14px;
+      font-weight: 900;
+      line-height: 1;
+      text-shadow: none;
+      pointer-events: none;
+    }
+    .board .cell.hint-muted { filter: brightness(.55); }
+    .board .cell.hint.selected { outline-width: 5px; }
     .cell.auto-match-reason {
       z-index: 4;
       animation: autoMatchReason .55s ease-in-out infinite alternate;
@@ -195,7 +223,7 @@
     .type-2 { background: #a360d0; border: 2px double #f1c5ff; }
     .type-3 { background: #d08b24; border: 2px dotted #fff0a5; }
 
-    @keyframes hintPulse { 50% { box-shadow: 0 0 0 4px var(--accent), 0 0 22px var(--accent); transform: scale(.9); } }
+    @keyframes hintPulse { 50% { box-shadow: 0 0 0 5px #08101f, 0 0 26px 8px #ffffffcc; } }
     @keyframes autoMatchReason {
       from { transform: scale(.94); filter: brightness(1.15); }
       to { transform: scale(1.08); filter: brightness(1.8); }
@@ -320,7 +348,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.6.8</span>
+          <span id="versionBadge" class="version-badge">v0.6.9</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -387,7 +415,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.6.8";
+    const APP_VERSION = "0.6.9";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -659,7 +687,14 @@
             cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 ${NAMES[value]}`);
           }
           if (selected && selected.r === r && selected.c === c) cell.classList.add("selected");
-          if (hinted.some(p => p.r === r && p.c === c)) cell.classList.add("hint");
+          const hintIndex = hinted.findIndex(p => p.r === r && p.c === c);
+          if (hintIndex >= 0) {
+            cell.classList.add("hint");
+            cell.dataset.hintOrder = String(hintIndex + 1);
+            cell.setAttribute("aria-label", `おすすめ${hintIndex + 1}：${r + 1}行${c + 1}列 ${value === null ? "空き" : NAMES[value]}`);
+          } else if (hinted.length) {
+            cell.classList.add("hint-muted");
+          }
           const extra = classes.get(key(r, c));
           if (extra) cell.classList.add(extra);
           cell.disabled = gameOver || cleared || busy;
@@ -810,10 +845,12 @@
       const r = Number(event.currentTarget.dataset.row);
       const c = Number(event.currentTarget.dataset.col);
       if (busy || gameOver || cleared) return;
-      hinted = [];
+      if (!hinted.some(p => p.r === r && p.c === c)) hinted = [];
       if (!selected) {
         selected = { r, c };
-        setMessage("上下左右の隣のマスを選ぶと交換します");
+        setMessage(hinted.length
+          ? "1個選択しました。もう片方の白枠のブロックを選ぶと交換します"
+          : "上下左右の隣のマスを選ぶと交換します");
       } else if (selected.r === r && selected.c === c) {
         selected = null;
         setMessage("選択を解除しました");
@@ -1049,7 +1086,7 @@
       const move = moves[Math.floor(Math.random() * moves.length)];
       hinted = [move.a, move.b];
       selected = null;
-      setMessage("光っている上下または左右の2個を選ぶと交換できます");
+      setMessage("白枠の①と②がヒントです。2個を選ぶと交換できます");
       render();
     }
 
@@ -1060,7 +1097,7 @@
       moves.sort((a, b) => forecastMove(b.a, b.b).launched - forecastMove(a.a, a.b).launched);
       hinted = [moves[0].a, moves[0].b];
       selected = null;
-      setMessage("おすすめの2個です。自分で2個を選ぶと交換できます");
+      setMessage("おすすめは白枠の①と②です。2個を選ぶと交換できます");
       render();
     }
 
