@@ -85,7 +85,7 @@
 
     .status {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(6, 1fr);
       gap: 5px;
       margin-bottom: 6px;
     }
@@ -154,6 +154,8 @@
 
     .cell.block { cursor: pointer; text-shadow: 0 2px 2px #0005; }
     .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
+    .cell.boost-lane { box-shadow: inset 0 0 0 2px #ffd34e66, 0 0 10px #ffd34e22; }
+    .cell.boost-lane.block { outline: 1px solid #ffd34e55; outline-offset: -3px; }
     .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
     .cell.auto-match-reason {
       z-index: 4;
@@ -328,6 +330,7 @@
         <div class="status-item"><span class="status-label">TURN</span><span class="status-value" id="turn">0</span></div>
         <div class="status-item"><span class="status-label">RISE</span><span class="status-value" id="rise">3</span></div>
         <div class="status-item"><span class="status-label">LAUNCH</span><span class="status-value" id="launchCount">0/30</span></div>
+        <div class="status-item"><span class="status-label">BOOST</span><span class="status-value" id="boostCol">1列</span></div>
       </div>
 
       <div class="board-wrap">
@@ -338,8 +341,9 @@
       <div id="message" class="message" aria-live="polite">上下左右に隣り合うブロックを選んでください</div>
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
-        <br><span class="clear-rule">交換 → マッチ → 自動発射・連鎖</span><br>
-        <span class="over-rule"><strong>BONUS</strong>：一度に3個以上でせり上がり+1手</span><br>
+        <br><span class="clear-rule">3個=推力2 / 4個=4 / 5個以上=6</span><br>
+        <span class="clear-rule"><strong>BOOST列</strong>で揃えると、その列だけ推力+2</span><br>
+        <span class="over-rule"><strong>BONUS</strong>：4個以上または2連鎖以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
       </div>
 
@@ -357,10 +361,12 @@
         <li><strong>上下左右に隣り合う2個</strong>を選んで交換</li>
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
+        <li><strong>4個・5個</strong>と多く揃えるほど打ち上げ推力が強くなる</li>
+        <li>光っている<strong>BOOST列</strong>で揃えると、その列の推力+2</li>
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
-        <li>基本<strong>3手ごと</strong>に下から1段追加（大量打ち上げで延期）</li>
+        <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
       </ol>
-      <p class="rule-note">考えている間は何も進みません。上の点線を越えないように、ブロックを宇宙へ飛ばしましょう。揃う交換がない場合は、自動で1段追加して盤面を動かします。</p>
+      <p class="rule-note">考えている間は何も進みません。3個をすぐ作るか、4個以上やBOOST列を狙うかを選べます。揃う交換がない場合は、自動で1段追加して盤面を動かします。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -381,7 +387,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.7.0";
+    const APP_VERSION = "0.8.0";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -397,6 +403,7 @@
     const turnEl = document.getElementById("turn");
     const riseEl = document.getElementById("rise");
     const launchCountEl = document.getElementById("launchCount");
+    const boostColEl = document.getElementById("boostCol");
     const messageEl = document.getElementById("message");
     const undoBtn = document.getElementById("undoBtn");
     const speedBtn = document.getElementById("speedBtn");
@@ -415,6 +422,7 @@
     let launchedTotal = 0;
     let nextRiseTurn = RISE_EVERY;
     let riseBonusGrantedThisMove = false;
+    let boostColumn = Math.floor(Math.random() * COLS);
     let busy = false;
     let fast = false;
     let gameOver = false;
@@ -436,6 +444,19 @@
 
     function key(r, c) {
       return `${r},${c}`;
+    }
+
+    function thrustForLength(length) {
+      if (length >= 5) return 6;
+      if (length === 4) return 4;
+      return 2;
+    }
+
+    function advanceBoostColumn() {
+      if (COLS <= 1) return;
+      let next = boostColumn;
+      while (next === boostColumn) next = Math.floor(Math.random() * COLS);
+      boostColumn = next;
     }
 
     function wait(ms) {
@@ -621,6 +642,7 @@
       turnEl.textContent = turn;
       riseEl.textContent = Math.max(0, nextRiseTurn - turn);
       launchCountEl.textContent = `${launchedTotal}/${LAUNCH_GOAL}`;
+      boostColEl.textContent = `${boostColumn + 1}列`;
       const disabled = busy || gameOver || cleared;
       undoBtn.disabled = disabled || !undoState;
       newBtn.disabled = busy;
@@ -646,6 +668,7 @@
             cell.textContent = SYMBOLS[value];
             cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 ${NAMES[value]}`);
           }
+          if (c === boostColumn) cell.classList.add("boost-lane");
           if (selected && selected.r === r && selected.c === c) cell.classList.add("selected");
           const extra = classes.get(key(r, c));
           if (extra) cell.classList.add(extra);
@@ -773,7 +796,7 @@
     }
 
     function saveUndo() {
-      undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
+      undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn, boostColumn };
     }
 
     async function onCellClick(event) {
@@ -830,6 +853,7 @@
       }
       await replenishUntilPlayable();
       if (gameOver || cleared) return;
+      advanceBoostColumn();
       busy = false;
       describeReadyBoard();
       render();
@@ -878,74 +902,141 @@
       while (!gameOver && chain < 30) {
         const matchInfo = analyzeMatches();
         const matches = matchInfo.matches;
+        const lines = matchInfo.lines;
         if (matches.size === 0) break;
 
         chain++;
-        setMessage(chain === 1 ? `${matches.size}個マッチ！ 点火！` : `${chain}連鎖！ 点火！`, "combo");
-        await animateMatch(matches);
 
-        // 各列の一番下の点火ブロックと、その上の全ブロックを一斉に運ぶ。
-        // 複数のマッチの間にある、揃っていないブロックも置き去りにしない。
-        const affected = new Map();
+        const cellOrientations = new Map();
+        for (const line of lines) {
+          for (const p of line.cells) {
+            const k = key(p.r, p.c);
+            if (!cellOrientations.has(k)) cellOrientations.set(k, new Set());
+            cellOrientations.get(k).add(line.orientation);
+          }
+        }
+
+        const columns = new Map();
+        for (const line of lines) {
+          const baseThrust = thrustForLength(line.length);
+          for (const p of line.cells) {
+            if (!columns.has(p.c)) {
+              columns.set(p.c, { bottom: p.r, thrust: baseThrust, matchedRows: new Set() });
+            }
+            const info = columns.get(p.c);
+            info.bottom = Math.max(info.bottom, p.r);
+            info.thrust = Math.max(info.thrust, baseThrust);
+            info.matchedRows.add(p.r);
+          }
+        }
+
         for (const position of matches) {
           const [r, c] = position.split(",").map(Number);
-          affected.set(c, Math.max(affected.get(c) ?? -1, r));
+          const orientations = cellOrientations.get(position);
+          if (orientations && orientations.size >= 2) {
+            columns.get(c).thrust += 2;
+          }
         }
+
+        let boostHit = false;
+        if (columns.has(boostColumn)) {
+          columns.get(boostColumn).thrust += 2;
+          boostHit = true;
+        }
+
+        const longest = lines.reduce((m, line) => Math.max(m, line.length), 0);
+        const headline = boostHit
+          ? `BOOST! 推力+2 / ${matches.size}個マッチ！`
+          : longest >= 4
+            ? `${longest}個マッチ！ 強打ち上げ！`
+            : chain === 1 ? `${matches.size}個マッチ！ 点火！` : `${chain}連鎖！ 点火！`;
+        setMessage(headline, "combo");
+        await animateMatch(matches);
 
         let launchedOut = 0;
         const launchMoves = [];
-        for (const [c, bottomMatchRow] of affected) {
-          // 一番下のブロックまで完全に上端の外へ出る距離。
-          // 同じ列は全員が同じ距離を進むので、積み重なりを維持する。
-          const launchDistance = bottomMatchRow + 1;
+        const placements = [];
+
+        for (const [c, info] of columns) {
           const moving = [];
-          for (let r = 0; r <= bottomMatchRow; r++) {
-            if (board[r][c] !== null) {
-              moving.push({ r, value: board[r][c], matched: matches.has(key(r, c)) });
-            }
+
+          for (let r = 0; r <= info.bottom; r++) {
+            const value = board[r][c];
+            if (value === null) continue;
+
+            const matched = info.matchedRows.has(r) && matches.has(key(r, c));
             board[r][c] = null;
+
+            if (matched) {
+              launchMoves.push({
+                from: { r, c },
+                to: { r: -1, c },
+                value,
+                matched: true
+              });
+              launchedOut++;
+              continue;
+            }
+
+            const nr = r - info.thrust;
+            moving.push({ r, nr, value });
           }
+
           for (const item of moving) {
-            const nr = item.r - launchDistance;
             launchMoves.push({
-              from: { r: item.r, c }, to: { r: nr, c },
-              value: item.value, matched: item.matched
+              from: { r: item.r, c },
+              to: { r: item.nr, c },
+              value: item.value,
+              matched: false
             });
-            // 揃ったブロックも含め、実際に上端から出た全員を数える。
-            launchedOut++;
+            if (item.nr < 0) {
+              launchedOut++;
+            } else {
+              placements.push({ r: item.nr, c, value: item.value });
+            }
           }
         }
 
-        setMessage("上に乗ったブロックと一緒に上端の外へ打ち上げ！", "combo");
+        for (const p of placements) board[p.r][p.c] = p.value;
+
+        setMessage(
+          boostHit ? "BOOST列が噴射！ 上のブロックを強く押し上げる！" : "マッチの大きさに応じて上方向へ打ち上げ！",
+          "combo"
+        );
         await animateMoves(launchMoves, "launch", 1200);
 
-        const gained = (matches.size * 10 + launchedOut * 35) * chain;
+        const bigMatch = lines.some(line => line.length >= 4);
+        const crossMatch = [...cellOrientations.values()].some(set => set.size >= 2);
+        const gained = (matches.size * 15 + launchedOut * 40 + (bigMatch ? 120 : 0) + (crossMatch ? 150 : 0)) * chain;
         score += gained;
 
         let riseDelayedNow = false;
-        if (launchedOut > 0) {
-          launchedTotal += launchedOut;
-          if (launchedOut >= 3 && !riseBonusGrantedThisMove) {
-            nextRiseTurn += 1;
-            riseBonusGrantedThisMove = true;
-            riseDelayedNow = true;
-          }
+        if ((bigMatch || chain >= 2) && !riseBonusGrantedThisMove) {
+          nextRiseTurn += 1;
+          riseBonusGrantedThisMove = true;
+          riseDelayedNow = true;
         }
+
+        launchedTotal += launchedOut;
 
         if (score > best) {
           best = score;
           localStorage.setItem("metopon-best", String(best));
         }
 
-        const delayText = riseDelayedNow ? "・せり上がりを1手延期！" : "";
+        const tags = [];
+        if (boostHit) tags.push("BOOST");
+        if (bigMatch) tags.push("BIG");
+        if (crossMatch) tags.push("CROSS");
+        if (chain >= 2) tags.push(`${chain}CHAIN`);
+        const tagText = tags.length ? `[${tags.join(" / ")}] ` : "";
+        const delayText = riseDelayedNow ? "・せり上がり+1手" : "";
+
         setMessage(
-          launchedOut > 0
-            ? `${chain}連鎖・${launchedOut}個を宇宙へ！ LAUNCH ${launchedTotal}/${LAUNCH_GOAL}${delayText} +${gained}`
-            : `${chain}連鎖！ +${gained}`,
+          `${tagText}${launchedOut}個を宇宙へ！ LAUNCH ${launchedTotal}/${LAUNCH_GOAL}${delayText} +${gained}`,
           "combo"
         );
 
-        // 目標数を飛ばした時点で即クリア。打ち上げアニメーション完了後にクリアする。
         if (launchedTotal >= LAUNCH_GOAL) {
           clearGame();
           break;
@@ -953,7 +1044,6 @@
 
         await wait(220);
 
-        // 入力待ちを挟まず落下させ、次のマッチを自動判定する。
         const fallMoves = applyGravity();
         await animateMoves(fallMoves, "fall", 980);
         await wait(260);
@@ -1014,6 +1104,7 @@
       turn = undoState.turn;
       launchedTotal = undoState.launchedTotal ?? 0;
       nextRiseTurn = undoState.nextRiseTurn ?? RISE_EVERY;
+      boostColumn = Number.isInteger(undoState.boostColumn) ? undoState.boostColumn : boostColumn;
       undoState = null;
       selected = null;
       setMessage("一手前に戻しました");
@@ -1046,7 +1137,7 @@
 
     function saveGame() {
       if (gameOver || cleared) return;
-      localStorage.setItem("metopon-save", JSON.stringify({ board, score, turn, launchedTotal, nextRiseTurn }));
+      localStorage.setItem("metopon-save", JSON.stringify({ board, score, turn, launchedTotal, nextRiseTurn, boostColumn }));
     }
 
     function loadGame() {
@@ -1057,6 +1148,9 @@
           score = Number(saved.score) || 0;
           turn = Number(saved.turn) || 0;
           launchedTotal = Number(saved.launchedTotal) || 0;
+          boostColumn = Number.isInteger(saved.boostColumn) && saved.boostColumn >= 0 && saved.boostColumn < COLS
+            ? saved.boostColumn
+            : Math.floor(Math.random() * COLS);
           if (Number(saved.nextRiseTurn) > turn) {
             nextRiseTurn = Number(saved.nextRiseTurn);
           } else {
@@ -1077,13 +1171,14 @@
       launchedTotal = 0;
       nextRiseTurn = RISE_EVERY;
       riseBonusGrantedThisMove = false;
+      boostColumn = Math.floor(Math.random() * COLS);
       gameOver = false;
       cleared = false;
       busy = false;
       selected = null;
       undoState = null;
       fillInitialBoard();
-      setMessage(`目標：上端から${LAUNCH_GOAL}個打ち上げる。3個同時ならせり上がりを1手延期！`);
+      setMessage(`目標：${LAUNCH_GOAL}個打ち上げる。BOOST列と4個以上のマッチを狙おう！`);
       render();
       saveGame();
     }
@@ -1113,7 +1208,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>3個以上揃ったら即発射：</strong>発射ボタンはありません。揃った瞬間に自動で点火し、打ち上げ・落下・連鎖まで進みます。<br><br><strong>3手ごとにせり上がり：</strong>上端を空けながら${LAUNCH_GOAL}個の打ち上げを目指します。揃う交換がない時は自動で1段追加します。<br><br>一度に3個以上飛ばすと次のせり上がりが1手遅れます。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>マッチの大きさが推力：</strong>3個=2マス、4個=4マス、5個以上=6マス。揃ったブロック自身はロケットとして飛びます。<br><br><strong>BOOST列：</strong>光っている列でマッチすると、その列だけ推力+2。BOOST列は毎ターン移動します。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
       "盤面に戻る"
     ));
 
@@ -1125,7 +1220,7 @@
       showDialog(`つづきから v${APP_VERSION}`, "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ", resumePlayableBoard);
     } else {
       newGame();
-      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを入れ替え、3個そろえましょう。<br>揃った瞬間に自動で発射し、落下と連鎖まで進みます。", "ゲームを始める");
+      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>4個以上やBOOST列を狙うと、より強く打ち上げられます。", "ゲームを始める");
     }
   </script>
 </body>
