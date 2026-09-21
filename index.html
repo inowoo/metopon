@@ -161,6 +161,24 @@
       animation: autoMatchReason .55s ease-in-out infinite alternate;
       box-shadow: 0 0 0 4px #fff, 0 0 26px #ffd34e;
     }
+    .cell.boost-choice {
+      z-index: 5;
+      animation: boostChoice .5s ease-in-out infinite alternate;
+      box-shadow: 0 0 0 4px #fff, 0 0 30px #ffd34e;
+    }
+    .cell.boost-choice::after {
+      content: "↑+2";
+      position: absolute;
+      right: -4px;
+      top: -12px;
+      padding: 2px 4px;
+      border-radius: 7px;
+      background: #ffd34e;
+      color: #201700;
+      font-size: 10px;
+      font-weight: 900;
+      line-height: 1;
+    }
     .cell.match { animation: ignite .34s ease-in-out 2; z-index: 2; }
     .cell.launch { animation: launch .38s ease-out; z-index: 2; }
     .cell.fall { animation: fall .3s ease-out; }
@@ -192,6 +210,10 @@
     @keyframes autoMatchReason {
       from { transform: scale(.94); filter: brightness(1.15); }
       to { transform: scale(1.08); filter: brightness(1.8); }
+    }
+    @keyframes boostChoice {
+      from { transform: translateY(0) scale(.95); filter: brightness(1.15); }
+      to { transform: translateY(-3px) scale(1.07); filter: brightness(1.9); }
     }
     @keyframes ignite { 50% { transform: scale(.72) rotate(8deg); filter: brightness(1.7); } }
     @keyframes launch { from { transform: translateY(38%); } to { transform: translateY(0); } }
@@ -335,6 +357,7 @@
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から6個打ち上げる</span>
         &nbsp;／&nbsp;
+        <span class="clear-rule"><strong>INTERVENE</strong>：マッチ後に1列を+2マスBOOST</span><br>
         <span class="over-rule"><strong>BONUS</strong>：一度に3個以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
       </div>
@@ -379,7 +402,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.4.0";
+    const APP_VERSION = "0.5.0";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -415,6 +438,11 @@
     let launchedTotal = 0;
     let nextRiseTurn = RISE_EVERY;
     let riseBonusGrantedThisMove = false;
+    let boostUsedThisMove = false;
+    let boostMode = false;
+    let boostColumns = [];
+    let boostHighlighted = new Set();
+    let boostResolver = null;
     let busy = false;
     let fast = false;
     let gameOver = false;
@@ -464,20 +492,9 @@
           return;
         }
 
-        // 全移動を「現在座標を±1pxする」方式で処理する。
-        // 補間率から座標を算出しないため、通常速度では本当に1pxずつ進む。
         let x = startX;
         let y = startY;
-        const fastStep = 5;
-        const stepPixels = fast ? fastStep : 1;
-        const intervalTable = {
-          swap: 6,
-          launch: 10,
-          matchedRocket: 10,
-          fall: 5,
-          rise: 8
-        };
-        const interval = fast ? 4 : (intervalTable[kind] ?? 8);
+        const stepPixels = fast ? 5 : 1;
 
         function finish() {
           sprite.style.left = `${endX}px`;
@@ -495,7 +512,7 @@
           }
         }
 
-        function step() {
+        function frameStep() {
           const remainX = endX - x;
           const remainY = endY - y;
 
@@ -504,6 +521,8 @@
             return;
           }
 
+          // 通常速度では、1回のブラウザ描画フレームにつき各軸を最大1pxだけ動かす。
+          // setTimeoutではなくrequestAnimationFrameを使い、途中の1px更新がまとめて描画されにくくする。
           if (remainX !== 0) {
             x += Math.sign(remainX) * Math.min(stepPixels, Math.abs(remainX));
           }
@@ -513,10 +532,10 @@
 
           sprite.style.left = `${x}px`;
           sprite.style.top = `${y}px`;
-          setTimeout(step, interval);
+          requestAnimationFrame(frameStep);
         }
 
-        setTimeout(step, interval);
+        requestAnimationFrame(frameStep);
       });
     }
 
@@ -693,9 +712,11 @@
           }
           if (selected && selected.r === r && selected.c === c) cell.classList.add("selected");
           if (hinted.some(p => p.r === r && p.c === c)) cell.classList.add("hint");
+          if (boostHighlighted.has(key(r, c))) cell.classList.add("boost-choice");
           const extra = classes.get(key(r, c));
           if (extra) cell.classList.add(extra);
-          cell.disabled = busy || gameOver || cleared;
+          const canChooseBoost = boostMode && boostHighlighted.has(key(r, c)) && boostColumns.includes(c);
+          cell.disabled = gameOver || cleared || (boostMode ? !canChooseBoost : busy);
           cell.addEventListener("click", onCellClick);
           boardEl.appendChild(cell);
         }
@@ -791,10 +812,56 @@
       undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
     }
 
+    function finishBoostChoice(column) {
+      if (!boostMode || !boostColumns.includes(column)) return;
+
+      boostMode = false;
+      boostColumns = [];
+      boostHighlighted = new Set();
+      const resolve = boostResolver;
+      boostResolver = null;
+      setMessage(`BOOST：${column + 1}列目を+2マス強化します`, "combo");
+      render();
+
+      if (resolve) resolve(column);
+    }
+
+    function requestBoostChoice(matches) {
+      if (boostUsedThisMove) return Promise.resolve(null);
+
+      const columns = [...new Set([...matches].map(position => Number(position.split(",")[1])))].sort((a, b) => a - b);
+      if (columns.length === 0) return Promise.resolve(null);
+
+      boostUsedThisMove = true;
+      boostMode = true;
+      boostColumns = columns;
+      boostHighlighted = new Set(matches);
+
+      setMessage(
+        columns.length === 1
+          ? "介入：光っているブロックを押してBOOST発射（この列を+2マス）"
+          : "介入：光っているブロックからBOOSTする列を1つ選んでください（+2マス）",
+        "combo"
+      );
+      render();
+
+      return new Promise(resolve => {
+        boostResolver = resolve;
+      });
+    }
+
     async function onCellClick(event) {
-      if (busy || gameOver || cleared) return;
       const r = Number(event.currentTarget.dataset.row);
       const c = Number(event.currentTarget.dataset.col);
+
+      if (boostMode) {
+        if (boostHighlighted.has(key(r, c)) && boostColumns.includes(c)) {
+          finishBoostChoice(c);
+        }
+        return;
+      }
+
+      if (busy || gameOver || cleared) return;
       hinted = [];
 
       if (!selected) {
@@ -836,6 +903,11 @@
       swapOn(board, a, b);
       turn++;
       riseBonusGrantedThisMove = false;
+      boostUsedThisMove = false;
+      boostMode = false;
+      boostColumns = [];
+      boostHighlighted = new Set();
+      boostResolver = null;
       setMessage("交換しました。結果を確認します…");
       await animateMoves(swapMoves, "swap", 460);
 
@@ -892,17 +964,28 @@
       while (!gameOver && chain < 30) {
         const matches = findMatches();
         if (matches.size === 0) break;
+
         chain++;
         setMessage(chain === 1 ? `${matches.size}個マッチ！ 点火！` : `${chain}連鎖！ 点火！`, "combo");
         await animateMatch(matches);
-        setMessage(chain === 1 ? "揃ったブロックを打ち上げ！" : `${chain}連鎖・ロケット発射！`, "combo");
-        await animateMatchedRockets(matches);
 
         const affected = new Map();
         for (const position of matches) {
           const [r, c] = position.split(",").map(Number);
           if (!affected.has(c) || r < affected.get(c)) affected.set(c, r);
         }
+
+        // 1手につき1回だけ、プレイヤーが打ち上げ列を選んで介入できる。
+        // おまかせで交換しても、この判断はプレイヤーに残す。
+        const boostColumn = await requestBoostChoice(matches);
+
+        setMessage(
+          boostColumn === null
+            ? (chain === 1 ? "揃ったブロックを打ち上げ！" : `${chain}連鎖・ロケット発射！`)
+            : `BOOST決定：${boostColumn + 1}列目の推力+2マス！`,
+          "combo"
+        );
+        await animateMatchedRockets(matches);
 
         for (const position of matches) {
           const [r, c] = position.split(",").map(Number);
@@ -912,15 +995,17 @@
         let launchedOut = 0;
         const launchMoves = [];
         for (const [c, topMatchRow] of affected) {
-          const thrust = thrustFor(matches, c);
+          const thrust = thrustFor(matches, c) + (c === boostColumn ? 2 : 0);
           const moving = [];
+
           for (let r = 0; r < topMatchRow; r++) {
             if (board[r][c] !== null) moving.push({ r, value: board[r][c] });
             board[r][c] = null;
           }
+
           for (const item of moving) {
             const nr = item.r - thrust;
-            launchMoves.push({from: {r: item.r, c}, to: {r: nr, c}, value: item.value});
+            launchMoves.push({ from: { r: item.r, c }, to: { r: nr, c }, value: item.value });
             if (nr < 0) {
               launchedOut++;
             } else {
@@ -941,17 +1026,21 @@
             riseDelayedNow = true;
           }
         }
+
         if (score > best) {
           best = score;
           localStorage.setItem("metopon-best", String(best));
         }
+
         const delayText = riseDelayedNow ? "・せり上がりを1手延期！" : "";
+        const boostText = boostColumn === null ? "" : `・BOOST ${boostColumn + 1}列`;
         setMessage(
           launchedOut > 0
-            ? `${chain}連鎖・${launchedOut}個を宇宙へ！ LAUNCH ${launchedTotal}/${LAUNCH_GOAL}${delayText} +${gained}`
-            : `${chain}連鎖！ +${gained}`,
+            ? `${chain}連鎖・${launchedOut}個を宇宙へ！ LAUNCH ${launchedTotal}/${LAUNCH_GOAL}${boostText}${delayText} +${gained}`
+            : `${chain}連鎖！${boostText} +${gained}`,
           "combo"
         );
+
         await animateMoves(launchMoves, "launch", 1200);
         await wait(320);
 
@@ -1133,6 +1222,11 @@
       launchedTotal = 0;
       nextRiseTurn = RISE_EVERY;
       riseBonusGrantedThisMove = false;
+      boostUsedThisMove = false;
+      boostMode = false;
+      boostColumns = [];
+      boostHighlighted = new Set();
+      boostResolver = null;
       gameOver = false;
       cleared = false;
       busy = false;
@@ -1172,7 +1266,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `横に並んだ2個を交換し、同じ記号を縦か横に3個そろえます。<br>交換後の打ち上げ・落下・連鎖はすべて自動です。<br><br><strong>上端から${LAUNCH_GOAL}個飛ばすとSTAGE CLEAR。</strong><br>一度に3個以上飛ばすと、次のせり上がりが1手遅れます。`,
+      `横に並んだ2個を交換し、同じ記号を縦か横に3個そろえます。<br><br><strong>マッチ後はプレイヤー介入：</strong><br>光っているマッチ列から1列を選ぶと、その列だけ推力+2マスでBOOSTします。おまかせを使っても、この発射判断は自分で行います。<br><br><strong>上端から${LAUNCH_GOAL}個飛ばすとSTAGE CLEAR。</strong><br>一度に3個以上飛ばすと、次のせり上がりが1手遅れます。`,
       "盤面に戻る"
     ));
 
