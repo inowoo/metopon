@@ -161,16 +161,6 @@
       animation: autoMatchReason .55s ease-in-out infinite alternate;
       box-shadow: 0 0 0 4px #fff, 0 0 26px #ffd34e;
     }
-    .cell.intervene-source {
-      z-index: 5;
-      animation: interveneSource .55s ease-in-out infinite alternate;
-      box-shadow: 0 0 0 3px #fff, 0 0 24px #ffd34e;
-    }
-    .cell.intervene-target {
-      z-index: 5;
-      animation: interveneTarget .5s ease-in-out infinite alternate;
-      box-shadow: inset 0 0 0 3px #fff, 0 0 22px #8de6ff;
-    }
     .cell.match { animation: ignite .34s ease-in-out 2; z-index: 2; }
     .cell.launch { animation: launch .38s ease-out; z-index: 2; }
     .cell.fall { animation: fall .3s ease-out; }
@@ -209,14 +199,6 @@
     @keyframes autoMatchReason {
       from { transform: scale(.94); filter: brightness(1.15); }
       to { transform: scale(1.08); filter: brightness(1.8); }
-    }
-    @keyframes interveneSource {
-      from { transform: scale(.96); filter: brightness(1.1); }
-      to { transform: scale(1.06); filter: brightness(1.75); }
-    }
-    @keyframes interveneTarget {
-      from { filter: brightness(1); }
-      to { filter: brightness(1.65); }
     }
     @keyframes ignite { 50% { transform: scale(.72) rotate(8deg); filter: brightness(1.7); } }
     @keyframes launch { from { transform: translateY(38%); } to { transform: translateY(0); } }
@@ -338,7 +320,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.6.5</span>
+          <span id="versionBadge" class="version-badge">v0.6.6</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -348,7 +330,7 @@
         <div class="status-item"><span class="status-label">BEST</span><span class="status-value" id="best">0</span></div>
         <div class="status-item"><span class="status-label">TURN</span><span class="status-value" id="turn">0</span></div>
         <div class="status-item"><span class="status-label">RISE</span><span class="status-value" id="rise">3</span></div>
-        <div class="status-item"><span class="status-label">LAUNCH</span><span class="status-value" id="launchCount">0/6</span></div>
+        <div class="status-item"><span class="status-label">LAUNCH</span><span class="status-value" id="launchCount">0/30</span></div>
       </div>
 
       <div class="board-wrap">
@@ -358,9 +340,8 @@
 
       <div id="message" class="message" aria-live="polite">左右に並んだブロックを選んでください</div>
       <div class="stage-rules" aria-label="ステージルール">
-        <span class="clear-rule"><strong>CLEAR</strong>：上端から6個打ち上げる</span>
-        &nbsp;／&nbsp;
-        <span class="clear-rule"><strong>INTERVENE</strong>：落下前に1個だけ左右へ移動</span><br>
+        <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
+        <br><span class="clear-rule">打ち上げ → 自動落下 → そろえば連鎖</span><br>
         <span class="over-rule"><strong>BONUS</strong>：一度に3個以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
       </div>
@@ -370,7 +351,6 @@
         <button id="hintBtn" class="control" type="button">◇ ヒント</button>
         <button id="autoBtn" class="control primary" type="button">▶ おまかせ</button>
         <button id="speedBtn" class="control" type="button">» 早送り</button>
-        <button id="skipInterveneBtn" class="control primary" type="button" hidden>↓ そのまま落下</button>
         <button id="newBtn" class="control" type="button">↻ 最初から</button>
         <button id="helpBtn" class="control" type="button">? 遊び方</button>
       </div>
@@ -382,7 +362,7 @@
         <li>ブロックを<strong>2個選んで横交換</strong></li>
         <li>同じ記号を縦か横に<strong>3個</strong>そろえる</li>
         <li>マッチした列が自動で<strong>打ち上がる</strong></li>
-        <li>打ち上げ後、最初の1回だけ<strong>落下前に1個横移動</strong>できる</li>
+        <li>残ったブロックは<strong>自動で落下</strong></li>
         <li>落下後のマッチは自動で<strong>連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（大量打ち上げで延期）</li>
       </ol>
@@ -407,12 +387,12 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.6.5";
+    const APP_VERSION = "0.6.6";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
     const RISE_EVERY = 3;
-    const LAUNCH_GOAL = 6;
+    const LAUNCH_GOAL = 30;
     const SYMBOLS = ["●", "▲", "■", "★"];
     const NAMES = ["丸", "三角", "四角", "星"];
 
@@ -428,7 +408,6 @@
     const hintBtn = document.getElementById("hintBtn");
     const autoBtn = document.getElementById("autoBtn");
     const speedBtn = document.getElementById("speedBtn");
-    const skipInterveneBtn = document.getElementById("skipInterveneBtn");
     const newBtn = document.getElementById("newBtn");
     const helpBtn = document.getElementById("helpBtn");
     const overlay = document.getElementById("overlay");
@@ -444,12 +423,6 @@
     let launchedTotal = 0;
     let nextRiseTurn = RISE_EVERY;
     let riseBonusGrantedThisMove = false;
-    let interventionUsedThisMove = false;
-    let interventionMode = false;
-    let interventionSources = new Set();
-    let interventionTargets = new Set();
-    let interventionSelected = null;
-    let interventionResolver = null;
     let busy = false;
     let fast = false;
     let gameOver = false;
@@ -663,8 +636,6 @@
       undoBtn.disabled = disabled || !undoState;
       newBtn.disabled = busy;
       speedBtn.classList.toggle("active", fast);
-      skipInterveneBtn.hidden = !interventionMode;
-      skipInterveneBtn.disabled = !interventionMode;
     }
 
     function render(classes = new Map()) {
@@ -688,13 +659,9 @@
           }
           if (selected && selected.r === r && selected.c === c) cell.classList.add("selected");
           if (hinted.some(p => p.r === r && p.c === c)) cell.classList.add("hint");
-          if (interventionSources.has(key(r, c))) cell.classList.add("intervene-source");
-          if (interventionTargets.has(key(r, c))) cell.classList.add("intervene-target");
           const extra = classes.get(key(r, c));
           if (extra) cell.classList.add(extra);
-          const canIntervene = interventionMode &&
-            (interventionSources.has(key(r, c)) || interventionTargets.has(key(r, c)));
-          cell.disabled = gameOver || cleared || (interventionMode ? !canIntervene : busy);
+          cell.disabled = gameOver || cleared || busy;
           cell.addEventListener("click", onCellClick);
           boardEl.appendChild(cell);
         }
@@ -819,107 +786,9 @@
       undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
     }
 
-    function getInterventionSources() {
-      const result = [];
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          if (board[r][c] === null) continue;
-          const leftEmpty = c > 0 && board[r][c - 1] === null;
-          const rightEmpty = c < COLS - 1 && board[r][c + 1] === null;
-          if (leftEmpty || rightEmpty) result.push({ r, c });
-        }
-      }
-      return result;
-    }
-
-    function targetsForIntervention(source) {
-      const targets = [];
-      if (source.c > 0 && board[source.r][source.c - 1] === null) {
-        targets.push({ r: source.r, c: source.c - 1 });
-      }
-      if (source.c < COLS - 1 && board[source.r][source.c + 1] === null) {
-        targets.push({ r: source.r, c: source.c + 1 });
-      }
-      return targets;
-    }
-
-    function finishIntervention(move = null) {
-      if (!interventionMode) return;
-
-      interventionMode = false;
-      interventionSources = new Set();
-      interventionTargets = new Set();
-      interventionSelected = null;
-      const resolve = interventionResolver;
-      interventionResolver = null;
-      selected = null;
-      render();
-
-      if (resolve) resolve(move);
-    }
-
-    function requestIntervention() {
-      if (interventionUsedThisMove) return Promise.resolve(null);
-
-      const sources = getInterventionSources();
-      if (sources.length === 0) return Promise.resolve(null);
-
-      interventionUsedThisMove = true;
-      interventionMode = true;
-      interventionSources = new Set(sources.map(p => key(p.r, p.c)));
-      interventionTargets = new Set();
-      interventionSelected = null;
-      selected = null;
-
-      setMessage("介入：落下前に1個だけ左右へ動かせます。光るブロックを選ぶか「そのまま落下」", "combo");
-      render();
-
-      return new Promise(resolve => {
-        interventionResolver = resolve;
-      });
-    }
-
-    async function handleInterventionClick(r, c) {
-      if (!interventionMode) return;
-
-      const k = key(r, c);
-
-      if (interventionTargets.has(k) && interventionSelected) {
-        const from = { ...interventionSelected };
-        const to = { r, c };
-        const value = board[from.r][from.c];
-
-        board[from.r][from.c] = null;
-        board[to.r][to.c] = value;
-
-        interventionSources = new Set();
-        interventionTargets = new Set();
-        setMessage("介入：1個横へ動かしました。ここから落下します", "combo");
-        render();
-
-        await animateMoves([{ from, to, value }], "intervene", 0);
-        finishIntervention({ from, to });
-        return;
-      }
-
-      if (interventionSources.has(k)) {
-        interventionSelected = { r, c };
-        selected = { r, c };
-        const targets = targetsForIntervention(interventionSelected);
-        interventionTargets = new Set(targets.map(p => key(p.r, p.c)));
-        setMessage("介入：左右の光る空きマスを選んでください", "combo");
-        render();
-      }
-    }
-
     async function onCellClick(event) {
       const r = Number(event.currentTarget.dataset.row);
       const c = Number(event.currentTarget.dataset.col);
-
-      if (interventionMode) {
-        await handleInterventionClick(r, c);
-        return;
-      }
 
       if (busy || gameOver || cleared) return;
       hinted = [];
@@ -963,12 +832,6 @@
       swapOn(board, a, b);
       turn++;
       riseBonusGrantedThisMove = false;
-      interventionUsedThisMove = false;
-      interventionMode = false;
-      interventionSources = new Set();
-      interventionTargets = new Set();
-      interventionSelected = null;
-      interventionResolver = null;
       setMessage("交換しました。結果を確認します…");
       await animateMoves(swapMoves, "swap", 460);
 
@@ -1084,7 +947,7 @@
           "combo"
         );
 
-        // 目標数を飛ばした時点で即クリア。不要な介入や落下を要求しない。
+        // 目標数を飛ばした時点で即クリア。打ち上げアニメーション完了後にクリアする。
         if (launchedTotal >= LAUNCH_GOAL) {
           clearGame();
           break;
@@ -1092,12 +955,7 @@
 
         await wait(220);
 
-        // 最初の落下前だけ、プレイヤーが1個を左右へ動かして連鎖を仕込める。
-        const interventionMove = await requestIntervention();
-        if (interventionMove) {
-          await wait(180);
-        }
-
+        // 入力待ちを挟まず落下させ、次のマッチを自動判定する。
         const fallMoves = applyGravity();
         await animateMoves(fallMoves, "fall", 980);
         await wait(260);
@@ -1269,12 +1127,6 @@
       launchedTotal = 0;
       nextRiseTurn = RISE_EVERY;
       riseBonusGrantedThisMove = false;
-      interventionUsedThisMove = false;
-      interventionMode = false;
-      interventionSources = new Set();
-      interventionTargets = new Set();
-      interventionSelected = null;
-      interventionResolver = null;
       gameOver = false;
       cleared = false;
       busy = false;
@@ -1305,11 +1157,6 @@
     undoBtn.addEventListener("click", undo);
     hintBtn.addEventListener("click", showHint);
     autoBtn.addEventListener("click", autoMove);
-    skipInterveneBtn.addEventListener("click", () => {
-      if (!interventionMode) return;
-      setMessage("介入なし。そのまま落下します", "combo");
-      finishIntervention(null);
-    });
     speedBtn.addEventListener("click", () => {
       fast = !fast;
       setMessage(fast ? "自動連鎖を早送りします" : "通常の演出速度に戻しました");
@@ -1319,7 +1166,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `横に並んだ2個を交換し、同じ記号を縦か横に3個そろえます。<br><br><strong>マッチ後はプレイヤー介入：</strong><br>打ち上げ後・落下前に盤面が止まり、1個だけ左右の空きマスへ動かせます。次に揃いそうな場所へずらして連鎖を仕込めます。動かしたくなければ「そのまま落下」を押します。<br><br><strong>上端から${LAUNCH_GOAL}個飛ばすとSTAGE CLEAR。</strong><br>一度に3個以上飛ばすと、次のせり上がりが1手遅れます。`,
+      `横に並んだ2個を交換し、同じ記号を縦か横に3個そろえます。<br><br><strong>マッチ後はすべて自動：</strong><br>そろったブロックとその上のブロックが上端の外へ飛び、残ったブロックが落下します。落下後にそろえば自動で連鎖します。<br><br><strong>上端から${LAUNCH_GOAL}個飛ばすとSTAGE CLEAR。</strong><br>一度に3個以上飛ばすと、次のせり上がりが1手遅れます。`,
       "盤面に戻る"
     ));
 
