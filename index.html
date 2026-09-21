@@ -156,19 +156,20 @@
     .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
     .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
     .board.chase-mode {
-      animation: chaseBoardPulse .7s ease-in-out infinite alternate;
-    }
-    .board.chase-mode .cell.block {
-      opacity: .62;
+      outline: 2px solid #ffd34e66;
+      outline-offset: 2px;
     }
     .board.chase-mode .cell.chase-candidate {
-      opacity: 1;
-      box-shadow: inset 0 0 0 3px #ffd34e, 0 0 18px #ffd34e99;
-      filter: brightness(1.2);
+      outline: 3px solid #ffd34e;
+      outline-offset: -2px;
+      box-shadow: 0 0 14px #ffd34e99;
+      z-index: 6;
     }
     .board.chase-mode .cell.chase-partner {
-      opacity: 1;
-      box-shadow: inset 0 0 0 4px #fff, 0 0 22px #ffffffbb;
+      outline: 4px solid #fff;
+      outline-offset: -2px;
+      box-shadow: 0 0 20px #ffffffbb;
+      z-index: 7;
       animation: recommendPulse .7s ease-in-out infinite;
     }
     .chase-banner {
@@ -196,8 +197,8 @@
       animation: chaseBannerPop .9s ease-out forwards;
     }
     .board.chase-mode .cell.selected {
-      opacity: 1;
       box-shadow: 0 0 0 4px white, 0 0 24px var(--accent);
+      z-index: 8;
     }
     .cell.recommend {
       outline: 3px solid white;
@@ -246,10 +247,6 @@
     .type-2 { background: #a360d0; border: 2px double #f1c5ff; }
     .type-3 { background: #d08b24; border: 2px dotted #fff0a5; }
     @keyframes recommendPulse { 50% { box-shadow: 0 0 0 5px #08101f, 0 0 28px 9px #ffffffcc; } }
-    @keyframes chaseBoardPulse {
-      from { filter: brightness(1); }
-      to { filter: brightness(1.16); }
-    }
     @keyframes chaseBannerPop {
       0% { opacity: 0; transform: translate(-50%, -50%) scale(.65); }
       18% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
@@ -386,7 +383,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.9</span>
+          <span id="versionBadge" class="version-badge">v0.8.10</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -456,7 +453,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.9";
+    const APP_VERSION = "0.8.10";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -1039,7 +1036,9 @@
     async function beginChaseSwap() {
       if (gameOver || cleared) return;
 
-      chaseMoves = possibleMoves();
+      chaseMoves = possibleMoves().filter(m =>
+        board[m.a.r][m.a.c] !== null && board[m.b.r][m.b.c] !== null
+      );
       if (!chaseMoves.length) {
         setMessage("追撃できる交換がありません。この手番を終了します");
         return;
@@ -1049,7 +1048,7 @@
       chaseSelected = null;
       selected = null;
       recommended = [];
-      setMessage("追撃 CHANCE! 黄色く光るブロックから選んでください", "combo");
+      setMessage("追撃 CHANCE! 黄色枠のブロックを選んでください", "combo");
       render();
       await playChaseIntro();
 
