@@ -386,7 +386,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.19</span>
+          <span id="versionBadge" class="version-badge">v0.8.20</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -430,12 +430,12 @@
         <li><strong>上下左右に隣り合う2個</strong>を選んで交換</li>
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
-        <li><strong>揃う数が多いほど推力UP</strong>。上に乗るブロック1個ごとに推力を0.30消費</li>
+        <li><strong>揃う数が多いほど推力UP</strong>。直接くっついている上のブロック1個ごとに推力を0.30消費</li>
         <li>発射が頂点に達した後、<strong>重力落下前に隣接交換を1回だけ追加</strong>できる</li>
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
       </ol>
-      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。上端を越えなかったマッチブロックは落下後に別種類へ変化して盤面に残ります。追撃では、重力落下する前の盤面で揃えられる交換だけが光ります。</p>
+      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。発射時に一緒に上がるのはマッチへ直接つながっている上の塊だけで、空白を挟んだブロックは動きません。上端を越えなかったマッチブロックは落下後に別種類へ変化して盤面に残ります。追撃では、重力落下する前の盤面で揃えられる交換だけが光ります。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -456,7 +456,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.19";
+    const APP_VERSION = "0.8.20";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -1025,6 +1025,35 @@
       return Math.max(0, Math.ceil(apexRow));
     }
 
+    function launchColumnPhysics(target, c, topMatch, baseThrust) {
+      // マッチ直上から連続してつながっているブロックだけを積み荷にする。
+      let attachedTop = topMatch;
+      while (attachedTop > 0 && target[attachedTop - 1][c] !== null) {
+        attachedTop--;
+      }
+
+      const load = topMatch - attachedTop;
+      let thrust = effectiveThrust(baseThrust, load);
+      let blockerRow = -1;
+
+      // 空白を挟んでさらに上にブロックがある場合、そのブロックは最初からは動かさない。
+      // 推力が届く場合も、まず接触する位置までで止める。
+      for (let r = attachedTop - 1; r >= 0; r--) {
+        if (target[r][c] !== null) {
+          blockerRow = r;
+          break;
+        }
+      }
+
+      if (blockerRow >= 0) {
+        const gap = attachedTop - blockerRow - 1;
+        if (gap > 0) thrust = Math.min(thrust, gap);
+      }
+
+      return { attachedTop, load, thrust, blockerRow };
+    }
+
+
     function forecastMove(a, b) {
       const trial = copyBoard();
       swapOn(trial, a, b);
@@ -1057,11 +1086,10 @@
 
       let launched = 0;
       for (const [c, col] of columns) {
-        let load = 0;
-        for (let r = 0; r < col.topMatch; r++) if (trial[r][c] !== null) load++;
-        const thrust = effectiveThrust(col.baseThrust, load);
+        const physics = launchColumnPhysics(trial, c, col.topMatch, col.baseThrust);
+        const thrust = physics.thrust;
 
-        for (let r = 0; r < col.topMatch; r++) {
+        for (let r = physics.attachedTop; r < col.topMatch; r++) {
           if (trial[r][c] !== null && r - thrust < 0) launched++;
         }
 
@@ -1417,17 +1445,17 @@
         const thrustNotes = [];
 
         for (const [c, info] of columns) {
-          let load = 0;
-          for (let r = 0; r < info.topMatch; r++) {
-            if (board[r][c] !== null) load++;
-          }
+          const physics = launchColumnPhysics(board, c, info.topMatch, info.baseThrust);
+          const load = physics.load;
+          const thrust = physics.thrust;
+          const contactText = physics.blockerRow >= 0 ? "・上の塊まで" : "";
+          thrustNotes.push(
+            `${c + 1}列:${info.baseThrust.toFixed(2)}→${thrust.toFixed(2)}${contactText}`
+          );
 
-          // 推力は小数マスで計算。積み荷1個ごとに0.65を消費する。
-          const thrust = effectiveThrust(info.baseThrust, load);
-          thrustNotes.push(`${c + 1}列:${info.baseThrust.toFixed(2)}→${thrust.toFixed(2)}`);
-
-          // 上の積み荷は実効推力ぶんだけ上昇。上端を越えなければ盤面に残る。
-          for (let r = 0; r < info.topMatch; r++) {
+          // 積み荷はマッチへ直接つながっている連続部分だけ。
+          // 空白より上のブロックは動かさず、推力が届けば接触位置まで上昇する。
+          for (let r = physics.attachedTop; r < info.topMatch; r++) {
             const value = board[r][c];
             if (value === null) continue;
 
