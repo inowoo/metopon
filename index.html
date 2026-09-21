@@ -371,7 +371,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.14</span>
+          <span id="versionBadge" class="version-badge">v0.8.15</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -393,7 +393,7 @@
       <div id="message" class="message" aria-live="polite">上下左右に隣り合うブロックを選んでください</div>
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から40個打ち上げる</span>
-        <br><span class="clear-rule">3個=推力2 / 4個=4 / 5個以上=6（上1個ごとに-1）</span><br>
+        <br><span class="clear-rule">3個=3.0 / 4個=4.75 / 5個以上=6.5（上1個ごとに-0.65）</span><br>
         <span class="over-rule"><strong>追撃交換</strong>：自動連鎖が途切れた時、隣接交換を1回追加できる</span><br>
         <span class="over-rule"><strong>BONUS</strong>：4個以上または2連鎖以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
@@ -415,7 +415,7 @@
         <li><strong>上下左右に隣り合う2個</strong>を選んで交換</li>
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
-        <li><strong>揃う数が多いほど推力UP</strong>。上に乗るブロック1個ごとに推力を1消費</li>
+        <li><strong>揃う数が多いほど推力UP</strong>。上に乗るブロック1個ごとに推力を0.65消費</li>
         <li>自動連鎖が途切れた時、<strong>隣接交換を1回だけ追加</strong>できる</li>
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
@@ -441,12 +441,18 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.14";
+    const APP_VERSION = "0.8.15";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
     const RISE_EVERY = 3;
     const LAUNCH_GOAL = 40;
+    // 小数で調整できる発射パラメータ。盤面上の「1.0 = 1マス」。
+    const THRUST_3 = 3.0;
+    const THRUST_4 = 4.75;
+    const THRUST_5_PLUS = 6.5;
+    const THRUST_LOAD_COST = 0.65;
+    const MIN_THRUST = 1.5;
     const SYMBOLS = ["●", "▲", "■", "★"];
     const NAMES = ["丸", "三角", "四角", "星"];
 
@@ -737,10 +743,11 @@
         sprite.className = `cell block type-${spriteType} motion-block${kind === "launch" && m.matched ? " jet matched-rocket" : ""}${kind === "rise" ? " rising" : ""}`;
         sprite.textContent = SYMBOLS[spriteType];
 
+        const visualTo = m.visualTo || m.to;
         const fromX = first.left - origin.left + m.from.c * stepX;
         const fromY = first.top - origin.top + m.from.r * stepY;
-        const toX = first.left - origin.left + m.to.c * stepX;
-        const toY = first.top - origin.top + m.to.r * stepY;
+        const toX = first.left - origin.left + visualTo.c * stepX;
+        const toY = first.top - origin.top + visualTo.r * stepY;
 
         Object.assign(sprite.style, {
           left: `${Math.round(fromX)}px`,
@@ -957,9 +964,18 @@
     }
 
     function baseThrustForLength(length) {
-      if (length >= 5) return 6;
-      if (length === 4) return 4;
-      return 2;
+      if (length >= 5) return THRUST_5_PLUS;
+      if (length === 4) return THRUST_4;
+      return THRUST_3;
+    }
+
+    function effectiveThrust(baseThrust, load) {
+      return Math.max(MIN_THRUST, baseThrust - load * THRUST_LOAD_COST);
+    }
+
+    function landingRowFromApex(apexRow) {
+      // 上昇は小数マスまで行い、盤面へ戻す時だけ直下の整数マスへ戻す。
+      return Math.max(0, Math.ceil(apexRow));
     }
 
     function forecastMove(a, b) {
@@ -992,14 +1008,19 @@
         }
       }
 
-      let launched = info.matches.size;
+      let launched = 0;
       for (const [c, col] of columns) {
         let load = 0;
         for (let r = 0; r < col.topMatch; r++) if (trial[r][c] !== null) load++;
-        const effectiveThrust = Math.max(1, col.baseThrust - load);
+        const thrust = effectiveThrust(col.baseThrust, load);
 
         for (let r = 0; r < col.topMatch; r++) {
-          if (trial[r][c] !== null && r - effectiveThrust < 0) launched++;
+          if (trial[r][c] !== null && r - thrust < 0) launched++;
+        }
+
+        for (const position of info.matches) {
+          const [mr, mc] = position.split(",").map(Number);
+          if (mc === c && mr - thrust < 0) launched++;
         }
       }
 
@@ -1354,9 +1375,9 @@
             if (board[r][c] !== null) load++;
           }
 
-          // 上に1個乗るごとに必要推力+1。積み荷1個につき上昇力を1消費する。
-          const effectiveThrust = Math.max(1, info.baseThrust - load);
-          thrustNotes.push(`${c + 1}列:${info.baseThrust}→${effectiveThrust}`);
+          // 推力は小数マスで計算。積み荷1個ごとに0.65を消費する。
+          const thrust = effectiveThrust(info.baseThrust, load);
+          thrustNotes.push(`${c + 1}列:${info.baseThrust.toFixed(2)}→${thrust.toFixed(2)}`);
 
           // 上の積み荷は実効推力ぶんだけ上昇。上端を越えなければ盤面に残る。
           for (let r = 0; r < info.topMatch; r++) {
@@ -1364,18 +1385,25 @@
             if (value === null) continue;
 
             board[r][c] = null;
-            const nr = r - effectiveThrust;
-            launchMoves.push({
-              from: { r, c },
-              to: { r: nr, c },
-              value,
-              matched: false
-            });
-
-            if (nr < 0) {
+            const apexRow = r - thrust;
+            if (apexRow < 0) {
+              launchMoves.push({
+                from: { r, c },
+                to: { r: apexRow, c },
+                value,
+                matched: false
+              });
               launchedOut++;
             } else {
-              placements.push({ r: nr, c, value });
+              const landingRow = landingRowFromApex(apexRow);
+              launchMoves.push({
+                from: { r, c },
+                to: { r: landingRow, c },
+                visualTo: { r: apexRow, c },
+                value,
+                matched: false
+              });
+              placements.push({ r: landingRow, c, value });
             }
           }
 
@@ -1386,18 +1414,25 @@
             if (value === null) continue;
 
             board[r][c] = null;
-            const nr = r - effectiveThrust;
-            launchMoves.push({
-              from: { r, c },
-              to: { r: nr, c },
-              value,
-              matched: true
-            });
-
-            if (nr < 0) {
+            const apexRow = r - thrust;
+            if (apexRow < 0) {
+              launchMoves.push({
+                from: { r, c },
+                to: { r: apexRow, c },
+                value,
+                matched: true
+              });
               launchedOut++;
             } else {
-              placements.push({ r: nr, c, value: spendBlock(value) });
+              const landingRow = landingRowFromApex(apexRow);
+              launchMoves.push({
+                from: { r, c },
+                to: { r: landingRow, c },
+                visualTo: { r: apexRow, c },
+                value,
+                matched: true
+              });
+              placements.push({ r: landingRow, c, value: spendBlock(value) });
             }
           }
         }
@@ -1624,7 +1659,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個=推力2、4個=4、5個以上=6。上に乗るブロック1個ごとに実効推力が1下がります。揃ったブロック自身も実効推力ぶんだけ上昇します。上端を越えれば消え、越えられず落ちてきた場合は着地時に元とは違う種類へランダム変化します。変化後はできるだけ3個揃いにならない種類を選びます。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>追撃交換：</strong>自然連鎖が止まった時、3個以上を作れる交換がある場合だけ発生します。候補ブロックが黄色く光り、1個選ぶと交換相手だけ白く光ります。追撃で揃えば連鎖を引き継いで追加発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個=推力3.0、4個=4.75、5個以上=6.5。上に乗るブロック1個ごとに実効推力が0.65下がり、最低1.5は残ります。推力は小数マスで計算します。揃ったブロック自身も実効推力ぶんだけ上昇します。上端を越えれば消え、越えられず落ちてきた場合は着地時に元とは違う種類へランダム変化します。変化後はできるだけ3個揃いにならない種類を選びます。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>追撃交換：</strong>自然連鎖が止まった時、3個以上を作れる交換がある場合だけ発生します。候補ブロックが黄色く光り、1個選ぶと交換相手だけ白く光ります。追撃で揃えば連鎖を引き継いで追加発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
       "盤面に戻る"
     ));
 
