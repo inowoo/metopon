@@ -345,7 +345,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.7.0</span>
+          <span id="versionBadge" class="version-badge">v0.8.3</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -366,7 +366,7 @@
       <div id="message" class="message" aria-live="polite">上下左右に隣り合うブロックを選んでください</div>
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
-        <br><span class="clear-rule">3個=推力2 / 4個=4 / 5個以上=6</span><br>
+        <br><span class="clear-rule">揃ったブロック＋その上を、上端の外まで一気に打ち上げ</span><br>
         <span class="over-rule"><strong>BONUS</strong>：4個以上または2連鎖以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
       </div>
@@ -386,11 +386,11 @@
         <li><strong>上下左右に隣り合う2個</strong>を選んで交換</li>
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
-        <li><strong>4個・5個</strong>と多く揃えるほど打ち上げ推力が強くなる</li>
+        <li>揃ったブロックと<strong>その上に乗っているブロックをまとめて上端の外へ</strong>打ち上げる</li>
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
       </ol>
-      <p class="rule-note">考えている間は何も進みません。3個をすぐ作るか、4個以上を狙うかを選べます。迷った時だけ「オススメ」で交換候補を表示できます。</p>
+      <p class="rule-note">考えている間は何も進みません。高い位置で揃えるほど、上に乗ったブロックもまとめて飛ばせます。迷った時だけ「オススメ」で交換候補を表示できます。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -411,7 +411,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.2";
+    const APP_VERSION = "0.8.3";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -468,12 +468,6 @@
 
     function key(r, c) {
       return `${r},${c}`;
-    }
-
-    function thrustForLength(length) {
-      if (length >= 5) return 6;
-      if (length === 4) return 4;
-      return 2;
     }
 
     function wait(ms) {
@@ -809,29 +803,16 @@
         }
       }
 
-      const columns = new Map();
-      for (const line of info.lines) {
-        const thrust = thrustForLength(line.length);
-        for (const p of line.cells) {
-          if (!columns.has(p.c)) columns.set(p.c, { bottom: p.r, thrust, matchedRows: new Set() });
-          const cinfo = columns.get(p.c);
-          cinfo.bottom = Math.max(cinfo.bottom, p.r);
-          cinfo.thrust = Math.max(cinfo.thrust, thrust);
-          cinfo.matchedRows.add(p.r);
-        }
-      }
-      for (const pos of info.matches) {
-        const [r,c] = pos.split(",").map(Number);
-        const orientations = cellOrientations.get(pos);
-        if (orientations && orientations.size >= 2) columns.get(c).thrust += 2;
+      const affected = new Map();
+      for (const position of info.matches) {
+        const [r, c] = position.split(",").map(Number);
+        affected.set(c, Math.max(affected.get(c) ?? -1, r));
       }
 
       let launched = 0;
-      for (const [c, cinfo] of columns) {
-        for (let r = 0; r <= cinfo.bottom; r++) {
-          if (trial[r][c] === null) continue;
-          const matched = cinfo.matchedRows.has(r) && info.matches.has(key(r,c));
-          if (matched || r - cinfo.thrust < 0) launched++;
+      for (const [c, bottom] of affected) {
+        for (let r = 0; r <= bottom; r++) {
+          if (trial[r][c] !== null) launched++;
         }
       }
 
@@ -1016,91 +997,49 @@
           }
         }
 
-        const columns = new Map();
-        for (const line of lines) {
-          const baseThrust = thrustForLength(line.length);
-          for (const p of line.cells) {
-            if (!columns.has(p.c)) {
-              columns.set(p.c, { bottom: p.r, thrust: baseThrust, matchedRows: new Set() });
-            }
-            const info = columns.get(p.c);
-            info.bottom = Math.max(info.bottom, p.r);
-            info.thrust = Math.max(info.thrust, baseThrust);
-            info.matchedRows.add(p.r);
-          }
-        }
-
+        // 各列で一番下にあるマッチ位置を発射台にする。
+        // その位置より上の全ブロックを同じ距離だけ運び、
+        // 一番下のマッチが上端の外へ出るところまで一気に打ち上げる。
+        const affected = new Map();
         for (const position of matches) {
           const [r, c] = position.split(",").map(Number);
-          const orientations = cellOrientations.get(position);
-          if (orientations && orientations.size >= 2) {
-            columns.get(c).thrust += 2;
-          }
+          affected.set(c, Math.max(affected.get(c) ?? -1, r));
         }
 
         const longest = lines.reduce((m, line) => Math.max(m, line.length), 0);
+        const crossMatch = [...cellOrientations.values()].some(set => set.size >= 2);
         const headline = longest >= 4
-          ? `${longest}個マッチ！ 強打ち上げ！`
-          : chain === 1 ? `${matches.size}個マッチ！ 点火！` : `${chain}連鎖！ 点火！`;
+          ? `${longest}個マッチ！ 大打ち上げ！`
+          : chain === 1 ? `${matches.size}個マッチ！ 発射！` : `${chain}連鎖！ 発射！`;
         setMessage(headline, "combo");
         await animateMatch(matches);
 
         let launchedOut = 0;
         const launchMoves = [];
-        const placements = [];
 
-        for (const [c, info] of columns) {
-          const moving = [];
+        for (const [c, bottomMatchRow] of affected) {
+          const launchDistance = bottomMatchRow + 1;
 
-          for (let r = 0; r <= info.bottom; r++) {
+          for (let r = 0; r <= bottomMatchRow; r++) {
             const value = board[r][c];
             if (value === null) continue;
 
-            const matched = info.matchedRows.has(r) && matches.has(key(r, c));
             board[r][c] = null;
-
-            const nr = r - info.thrust;
-
-            if (matched) {
-              // 揃ったブロックも上に乗ったブロックと同じ推力で上昇させる。
-              // 上端まで単独で突き抜けさせると、上のブロックを追い越して見えるため。
-              launchMoves.push({
-                from: { r, c },
-                to: { r: nr, c },
-                value,
-                matched: true
-              });
-              // マッチしたブロックは上昇演出後に消える。LAUNCH進捗には従来どおり加算。
-              launchedOut++;
-              continue;
-            }
-
-            moving.push({ r, nr, value });
-          }
-
-          for (const item of moving) {
             launchMoves.push({
-              from: { r: item.r, c },
-              to: { r: item.nr, c },
-              value: item.value,
-              matched: false
+              from: { r, c },
+              to: { r: r - launchDistance, c },
+              value,
+              matched: matches.has(key(r, c))
             });
-            if (item.nr < 0) {
-              launchedOut++;
-            } else {
-              placements.push({ r: item.nr, c, value: item.value });
-            }
+            launchedOut++;
           }
         }
 
-        for (const p of placements) board[p.r][p.c] = p.value;
-
-        setMessage("揃ったブロックと上のブロックを一緒に打ち上げ！", "combo");
-        await animateMoves(launchMoves, "launch", 1200);
+        setMessage("上に乗ったブロックごと、そのまま上端の外へ打ち抜く！", "combo");
+        await animateMoves(launchMoves, "launch", 1450);
 
         const bigMatch = lines.some(line => line.length >= 4);
-        const crossMatch = [...cellOrientations.values()].some(set => set.size >= 2);
-        const gained = (matches.size * 15 + launchedOut * 40 + (bigMatch ? 120 : 0) + (crossMatch ? 150 : 0)) * chain;
+        const gained = (matches.size * 15 + launchedOut * 45 + (bigMatch ? 160 : 0) + (crossMatch ? 180 : 0)) * chain;
         score += gained;
 
         let riseDelayedNow = false;
@@ -1267,7 +1206,7 @@
       recommended = [];
       undoState = null;
       fillInitialBoard();
-      setMessage(`目標：${LAUNCH_GOAL}個打ち上げる。4個以上のマッチや連鎖を狙おう！`);
+      setMessage(`目標：${LAUNCH_GOAL}個打ち上げる。高い位置で揃えて上の塊ごと飛ばそう！`);
       render();
       saveGame();
     }
@@ -1298,7 +1237,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>マッチの大きさが推力：</strong>3個=2マス、4個=4マス、5個以上=6マス。揃ったブロックと、その上に乗ったブロックは同じ距離だけ一緒に上昇します。揃ったブロックは上昇後に消えます。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補を①②で表示します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個以上揃うと、揃ったブロックとその上に乗っているブロックをひとかたまりで上端の外まで打ち上げます。途中でブロックだけ消えたり、上のブロックを追い越したりしません。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補を①②で表示します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
       "盤面に戻る"
     ));
 
@@ -1310,7 +1249,7 @@
       showDialog(`つづきから v${APP_VERSION}`, "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ", resumePlayableBoard);
     } else {
       newGame();
-      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>4個以上を狙うと、より強く打ち上げられます。", "ゲームを始める");
+      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>揃った列は、上に乗ったブロックごと上端の外まで一気に打ち上がります。", "ゲームを始める");
     }
   </script>
 </body>
