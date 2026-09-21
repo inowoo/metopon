@@ -155,6 +155,11 @@
     .cell.block { cursor: pointer; text-shadow: 0 2px 2px #0005; }
     .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
     .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
+    .cell.preview-pair { box-shadow: inset 0 0 0 3px white; outline: 2px solid white; z-index: 2; }
+    .decision { margin-top: 6px; padding: 8px; background: #0b1529; border: 1px solid #718bb5; border-radius: 10px; font-size: 13px; text-align: center; }
+    .decision[hidden] { display: none; }
+    .decision p { margin: 0 0 6px; }
+    .decision button { padding: 7px 12px; }
     .cell.hint { animation: hintPulse .7s ease-in-out 3; z-index: 2; }
     .cell.auto-match-reason {
       z-index: 4;
@@ -320,7 +325,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.6.6</span>
+          <span id="versionBadge" class="version-badge">v0.6.7</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -339,6 +344,15 @@
       </div>
 
       <div id="message" class="message" aria-live="polite">左右に並んだブロックを選んでください</div>
+      <div id="previewPanel" class="decision" hidden>
+        <p id="previewText" aria-live="polite"></p>
+        <button id="confirmBtn" class="control primary" type="button">この交換を実行</button>
+        <button id="cancelBtn" class="control" type="button">選び直す</button>
+      </div>
+      <div id="supplyPanel" class="decision" hidden>
+        <p id="supplyText">今は1回の交換で揃いません。交換で配置を整えるか、1段追加できます。</p>
+        <button id="supplyBtn" class="control primary" type="button">↑ 1段追加</button>
+      </div>
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
         <br><span class="clear-rule">打ち上げ → 自動落下 → そろえば連鎖</span><br>
@@ -349,7 +363,7 @@
       <div class="controls">
         <button id="undoBtn" class="control" type="button">↶ 一手戻す</button>
         <button id="hintBtn" class="control" type="button">◇ ヒント</button>
-        <button id="autoBtn" class="control primary" type="button">▶ おまかせ</button>
+        <button id="autoBtn" class="control primary" type="button">◇ おまかせ候補</button>
         <button id="speedBtn" class="control" type="button">» 早送り</button>
         <button id="newBtn" class="control" type="button">↻ 最初から</button>
         <button id="helpBtn" class="control" type="button">? 遊び方</button>
@@ -359,14 +373,15 @@
     <aside class="side-panel">
       <h2>遊び方</h2>
       <ol class="howto">
-        <li>ブロックを<strong>2個選んで横交換</strong></li>
+        <li>横に並ぶ<strong>2個を選んで結果を予告</strong></li>
+        <li>選んだブロックを再タップ、または<strong>「この交換を実行」</strong></li>
         <li>同じ記号を縦か横に<strong>3個</strong>そろえる</li>
         <li>マッチした列が自動で<strong>打ち上がる</strong></li>
         <li>残ったブロックは<strong>自動で落下</strong></li>
         <li>落下後のマッチは自動で<strong>連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（大量打ち上げで延期）</li>
       </ol>
-      <p class="rule-note">考えている間は何も進みません。上の点線を越えないように、ブロックを宇宙へ飛ばしましょう。困った時は「ヒント」か「おまかせ」が使えます。</p>
+      <p class="rule-note">考えている間は何も進みません。上の点線を越えないように、ブロックを宇宙へ飛ばしましょう。「おまかせ候補」は多く飛ばせる交換を提案します。すぐ揃う手がなければ「1段追加」も選べます。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -387,7 +402,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.6.6";
+    const APP_VERSION = "0.6.7";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -416,6 +431,14 @@
     const dialogBtn = document.getElementById("dialogBtn");
 
     let board = emptyBoard();
+    const previewPanel = document.getElementById("previewPanel");
+    const previewText = document.getElementById("previewText");
+    const confirmBtn = document.getElementById("confirmBtn");
+    const cancelBtn = document.getElementById("cancelBtn");
+    const supplyPanel = document.getElementById("supplyPanel");
+    const supplyText = document.getElementById("supplyText");
+    const supplyBtn = document.getElementById("supplyBtn");
+    let pendingMove = null;
     let selected = null;
     let score = 0;
     let best = Number(localStorage.getItem("metopon-best") || 0);
@@ -636,6 +659,14 @@
       undoBtn.disabled = disabled || !undoState;
       newBtn.disabled = busy;
       speedBtn.classList.toggle("active", fast);
+      previewPanel.hidden = disabled || !pendingMove;
+      confirmBtn.disabled = disabled || !pendingMove;
+      cancelBtn.disabled = disabled;
+      supplyPanel.hidden = disabled || possibleMoves().length > 0;
+      supplyBtn.disabled = disabled;
+      supplyText.textContent = board[0].some(v => v !== null)
+        ? "今は1回の交換で揃いません。上端にブロックがあるため、1段追加するとゲームオーバーです。"
+        : "今は1回の交換で揃いません。交換で配置を整えるか、1段追加できます。";
     }
 
     function render(classes = new Map()) {
@@ -659,6 +690,7 @@
           }
           if (selected && selected.r === r && selected.c === c) cell.classList.add("selected");
           if (hinted.some(p => p.r === r && p.c === c)) cell.classList.add("hint");
+          if (pendingMove && [pendingMove.a, pendingMove.b].some(p => p.r === r && p.c === c)) cell.classList.add("preview-pair");
           const extra = classes.get(key(r, c));
           if (extra) cell.classList.add(extra);
           cell.disabled = gameOver || cleared || busy;
@@ -786,42 +818,106 @@
       undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
     }
 
+    // 予告はコピー上で計算し、実盤面・手数・得点には触れない。
+    function forecastMove(a, b) {
+      const trial = copyBoard();
+      swapOn(trial, a, b);
+      const matches = findMatches(trial);
+      const bottoms = new Map();
+      for (const position of matches) {
+        const [r, c] = position.split(",").map(Number);
+        bottoms.set(c, Math.max(bottoms.get(c) ?? -1, r));
+      }
+      let launched = 0;
+      for (const [c, bottom] of bottoms) {
+        for (let r = 0; r <= bottom; r++) if (trial[r][c] !== null) launched++;
+      }
+      return { matched: matches.size, launched };
+    }
+
+    function previewMove(a, b) {
+      if (busy || gameOver || cleared) return;
+      const forecast = forecastMove(a, b);
+      pendingMove = { a: { ...a }, b: { ...b } };
+      selected = null;
+      hinted = [];
+      previewText.textContent = forecast.matched
+        ? `最初の打ち上げ：${forecast.matched}個揃う・上のブロックも含めて${forecast.launched}個飛ぶ（連鎖分は別）`
+        : "この交換では揃いません。次の一手のために配置を整えます。";
+      setMessage("白枠のどちらかを再タップ、または「この交換を実行」。別のマスで選び直せます");
+      render();
+    }
+
+    async function confirmMove() {
+      if (!pendingMove || busy || gameOver || cleared) return;
+      const { a, b } = pendingMove;
+      pendingMove = null;
+      await makeMove(a, b);
+    }
+
+    function cancelPreview() {
+      if (busy || gameOver || cleared) return;
+      pendingMove = null;
+      selected = null;
+      hinted = [];
+      setMessage("横に並ぶ2個を選んでください");
+      render();
+    }
+
     async function onCellClick(event) {
       const r = Number(event.currentTarget.dataset.row);
       const c = Number(event.currentTarget.dataset.col);
-
       if (busy || gameOver || cleared) return;
+      if (pendingMove) {
+        if ([pendingMove.a, pendingMove.b].some(p => p.r === r && p.c === c)) {
+          await confirmMove();
+          return;
+        }
+        pendingMove = null;
+        selected = null;
+      }
       hinted = [];
-
       if (!selected) {
         selected = { r, c };
-        setMessage("左右どちらかのブロックを選んでください");
-        render();
-        return;
-      }
-
-      if (selected.r === r && selected.c === c) {
+        setMessage("左右どちらかを選ぶと、交換結果を予告します");
+      } else if (selected.r === r && selected.c === c) {
         selected = null;
         setMessage("選択を解除しました");
-        render();
+      } else if (selected.r === r && Math.abs(selected.c - c) === 1) {
+        previewMove(selected, { r, c });
         return;
-      }
-
-      if (selected.r !== r || Math.abs(selected.c - c) !== 1) {
+      } else {
         selected = { r, c };
         setMessage("交換するブロックを選び直しました");
-        render();
-        return;
       }
+      render();
+    }
 
-      const a = selected;
+    async function supplyRow() {
+      if (busy || gameOver || cleared || possibleMoves().length > 0) return;
+      saveUndo();
+      pendingMove = null;
       selected = null;
-      await makeMove(a, { r, c });
+      hinted = [];
+      busy = true;
+      turn++;
+      // 手動追加がこの手のせり上がりを兼ねる。次の自動追加は3手後。
+      nextRiseTurn = turn + RISE_EVERY;
+      riseBonusGrantedThisMove = false;
+      render();
+      await addRow();
+      if (!gameOver) await resolveBoard();
+      if (gameOver || cleared) return;
+      busy = false;
+      setMessage(possibleMoves().length ? "1段追加しました。次の交換を選びましょう" : "まだ1回の交換では揃いません。配置を整えるか、もう1段追加できます");
+      render();
+      saveGame();
     }
 
     async function makeMove(a, b, options = {}) {
       if (busy || gameOver || cleared) return;
       saveUndo();
+      pendingMove = null;
       busy = true;
       hinted = [];
       selected = null;
@@ -1011,9 +1107,11 @@
 
     function showHint() {
       if (busy || gameOver || cleared) return;
+      pendingMove = null;
       const moves = possibleMoves();
       if (moves.length === 0) {
-        setMessage("今すぐマッチできる手はありません");
+        render();
+        setMessage("今は1回の交換で揃いません。「1段追加」も選べます");
         return;
       }
       const move = moves[Math.floor(Math.random() * moves.length)];
@@ -1023,37 +1121,17 @@
       render();
     }
 
-    async function autoMove() {
+    function autoMove() {
       if (busy || gameOver || cleared) return;
       const moves = possibleMoves();
-      if (moves.length === 0) {
-        setMessage("今すぐ揃う手はありません。左右の交換で配置を整えましょう");
+      if (!moves.length) {
+        cancelPreview();
+        setMessage("今は1回の交換で揃いません。「1段追加」か、左右の交換で配置を整えましょう");
         return;
       }
-
-      const move = moves[Math.floor(Math.random() * moves.length)];
-
-      // おまかせでも何を操作したのか追えるように、
-      // 人がクリックするような間を入れて1マスずつ見せる。
-      busy = true;
-      hinted = [];
-      selected = move.a;
-      setMessage("おまかせ：1個目を選びます");
-      render();
-      await waitExact(650);
-
-      selected = move.b;
-      hinted = [move.a, move.b];
-      setMessage("おまかせ：この2個を交換します");
-      render();
-      await waitExact(800);
-
-      selected = null;
-      render();
-      await waitExact(300);
-
-      busy = false;
-      await makeMove(move.a, move.b, { showMatchReason: true });
+      // 初回に飛ばせる個数が最大の候補を示す。実行はプレイヤーが決める。
+      moves.sort((a, b) => forecastMove(b.a, b.b).launched - forecastMove(a.a, a.b).launched);
+      previewMove(moves[0].a, moves[0].b);
     }
 
     function undo() {
@@ -1064,6 +1142,7 @@
       launchedTotal = undoState.launchedTotal ?? 0;
       nextRiseTurn = undoState.nextRiseTurn ?? RISE_EVERY;
       undoState = null;
+      pendingMove = null;
       selected = null;
       hinted = [];
       setMessage("一手前に戻しました");
@@ -1122,6 +1201,7 @@
     }
 
     function newGame() {
+      pendingMove = null;
       score = 0;
       turn = 0;
       launchedTotal = 0;
@@ -1154,6 +1234,9 @@
       if (action) action();
     });
 
+    confirmBtn.addEventListener("click", confirmMove);
+    cancelBtn.addEventListener("click", cancelPreview);
+    supplyBtn.addEventListener("click", supplyRow);
     undoBtn.addEventListener("click", undo);
     hintBtn.addEventListener("click", showHint);
     autoBtn.addEventListener("click", autoMove);
@@ -1166,7 +1249,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `横に並んだ2個を交換し、同じ記号を縦か横に3個そろえます。<br><br><strong>マッチ後はすべて自動：</strong><br>そろったブロックとその上のブロックが上端の外へ飛び、残ったブロックが落下します。落下後にそろえば自動で連鎖します。<br><br><strong>上端から${LAUNCH_GOAL}個飛ばすとSTAGE CLEAR。</strong><br>一度に3個以上飛ばすと、次のせり上がりが1手遅れます。`,
+      `横に並んだ2個を選ぶと、揃う数と最初に飛ばせる数を予告します。選んだブロックを再タップ、または「この交換を実行」で確定。別のマスを押すと選び直せます。<br><br>「おまかせ候補」はおすすめを示すだけで、交換はしません。1回で揃う手がなければ「1段追加」も選べます（1手消費・次の自動追加は3手後）。<br><br><strong>マッチ後はすべて自動：</strong><br>そろったブロックとその上のブロックが上端の外へ飛び、残ったブロックが落下します。落下後にそろえば自動で連鎖します。<br><br><strong>上端から${LAUNCH_GOAL}個飛ばすとSTAGE CLEAR。</strong><br>一度に3個以上飛ばすと、次のせり上がりが1手遅れます。`,
       "盤面に戻る"
     ));
 
