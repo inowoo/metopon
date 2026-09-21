@@ -67,8 +67,20 @@
       margin-bottom: 6px;
     }
 
+    .brand { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
     h1 { margin: 0; font-size: clamp(22px, 5vw, 32px); letter-spacing: .04em; }
     h1 span { color: var(--accent); }
+    .version-badge {
+      flex: none;
+      padding: 2px 6px;
+      border: 1px solid #526b95;
+      border-radius: 999px;
+      color: #c9d6ec;
+      background: #0b1529;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .03em;
+    }
     .tagline { color: var(--muted); font-size: 12px; text-align: right; }
 
     .status {
@@ -269,7 +281,10 @@
   <main class="app">
     <section class="game-panel" aria-label="METOPONゲーム">
       <header>
-        <h1>METO<span>PON</span></h1>
+        <div class="brand">
+          <h1>METO<span>PON</span></h1>
+          <span id="versionBadge" class="version-badge">v0.2.0</span>
+        </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
 
@@ -328,6 +343,7 @@
   <script>
     "use strict";
 
+    const APP_VERSION = "0.2.0";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -336,6 +352,7 @@
     const SYMBOLS = ["●", "▲", "■", "★"];
     const NAMES = ["丸", "三角", "四角", "星"];
 
+    const versionBadge = document.getElementById("versionBadge");
     const boardEl = document.getElementById("board");
     const scoreEl = document.getElementById("score");
     const bestEl = document.getElementById("best");
@@ -389,9 +406,47 @@
 
     // Render moving copies over a stable grid. Positions are measured per phase,
     // so motion travels the full distance on phones as well as desktop screens.
+    function animateSpriteByPixels(sprite, fromX, fromY, toX, toY, duration, kind) {
+      return new Promise(resolve => {
+        if (duration <= 1) {
+          sprite.style.left = `${Math.round(toX)}px`;
+          sprite.style.top = `${Math.round(toY)}px`;
+          resolve();
+          return;
+        }
+
+        const start = performance.now();
+        function tick(now) {
+          const t = Math.min(1, (now - start) / duration);
+
+          // 座標は毎フレーム整数ピクセルに丸める。
+          // CSSのtransform補間に任せず、盤面上をドット単位で移動させる。
+          const x = Math.round(fromX + (toX - fromX) * t);
+          const y = Math.round(fromY + (toY - fromY) * t);
+          sprite.style.left = `${x}px`;
+          sprite.style.top = `${y}px`;
+
+          if (t < 1) {
+            requestAnimationFrame(tick);
+          } else if (kind === "fall") {
+            const landing = sprite.animate([
+              { transform: "scale(1)" },
+              { transform: "scale(1.08,.9)", offset: .45 },
+              { transform: "scale(1)" }
+            ], { duration: fast ? 70 : 150, easing: "ease-out" });
+            landing.finished.catch(() => {}).finally(resolve);
+          } else {
+            resolve();
+          }
+        }
+        requestAnimationFrame(tick);
+      });
+    }
+
     async function animateMoves(moves, kind, ms) {
       render();
       if (!moves.length) return;
+
       const cells = [...boardEl.children];
       const origin = boardEl.getBoundingClientRect();
       const first = cells[0].getBoundingClientRect();
@@ -401,38 +456,44 @@
       layer.className = "motion-layer";
       layer.setAttribute("aria-hidden", "true");
       boardEl.appendChild(layer);
-      const animations = [];
+
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const duration = reduced ? 1 : fast ? ms / 3 : ms;
+      const animations = [];
+
       for (const m of moves) {
         if (m.value === null) continue;
-        if (m.to.r >= 0 && m.to.r < ROWS) cells[m.to.r * COLS + m.to.c].style.visibility = "hidden";
+        if (m.to.r >= 0 && m.to.r < ROWS) {
+          cells[m.to.r * COLS + m.to.c].style.visibility = "hidden";
+        }
+
         const sprite = document.createElement("div");
         sprite.className = `cell block type-${m.value} motion-block${kind === "launch" ? " jet" : ""}`;
         sprite.textContent = SYMBOLS[m.value];
+
+        const fromX = first.left - origin.left + m.from.c * stepX;
+        const fromY = first.top - origin.top + m.from.r * stepY;
+        const toX = first.left - origin.left + m.to.c * stepX;
+        const toY = first.top - origin.top + m.to.r * stepY;
+
         Object.assign(sprite.style, {
-          left: `${first.left - origin.left + m.from.c * stepX}px`,
-          top: `${first.top - origin.top + m.from.r * stepY}px`,
-          width: `${first.width}px`, height: `${first.height}px`
+          left: `${Math.round(fromX)}px`,
+          top: `${Math.round(fromY)}px`,
+          width: `${first.width}px`,
+          height: `${first.height}px`,
+          willChange: "left, top"
         });
+
         layer.appendChild(sprite);
-        const dx = (m.to.c - m.from.c) * stepX;
-        const dy = (m.to.r - m.from.r) * stepY;
-        const end = `translate(${dx}px, ${dy}px)`;
-        const frames = kind === "fall" ? [
-          {transform: "translate(0,0)", offset: 0},
-          {transform: end, offset: .82},
-          {transform: `${end} scale(1.1,.86)`, offset: .91},
-          {transform: end, offset: 1}
-        ] : [{transform: "translate(0,0)"}, {transform: end}];
-        animations.push(sprite.animate(frames, {
-          duration: reduced ? 1 : fast ? ms / 3 : ms,
-          easing: kind === "launch" ? "cubic-bezier(.45,0,.2,1)" :
-            kind === "fall" ? "cubic-bezier(.45,0,.8,1)" : "ease-in-out",
-          fill: "forwards"
-        }));
+        animations.push(animateSpriteByPixels(sprite, fromX, fromY, toX, toY, duration, kind));
       }
-      try { await Promise.all(animations.map(a => a.finished.catch(() => {}))); }
-      finally { layer.remove(); render(); }
+
+      try {
+        await Promise.all(animations);
+      } finally {
+        layer.remove();
+        render();
+      }
     }
 
     async function animateMatch(matches) {
@@ -910,13 +971,15 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog("遊び方", "横に並んだ2個を交換し、同じ記号を縦か横に3個そろえます。<br>交換後の打ち上げ・落下・連鎖はすべて自動です。考えている間は盤面が動きません。", "盤面に戻る"));
 
+    versionBadge.textContent = `v${APP_VERSION}`;
+    document.title = `METOPON v${APP_VERSION} - 打ち上げ連鎖パズル`;
     bestEl.textContent = best.toLocaleString("ja-JP");
     if (loadGame()) {
       render();
-      showDialog("つづきから", "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ");
+      showDialog(`つづきから v${APP_VERSION}`, "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ");
     } else {
       newGame();
-      showDialog("METOPON", "隣り合うブロックを横に入れ替え、3個そろえましょう。<br>その後の打ち上げと連鎖は、ゲームが自動で進めます。", "ゲームを始める");
+      showDialog(`METOPON v${APP_VERSION}`, "隣り合うブロックを横に入れ替え、3個そろえましょう。<br>その後の打ち上げと連鎖は、ゲームが自動で進めます。", "ゲームを始める");
     }
   </script>
 </body>
