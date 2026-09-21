@@ -1153,6 +1153,13 @@
         );
 
         await animateMoves(launchMoves, "launch", 1200);
+
+        // 目標数を飛ばした時点で即クリア。不要な介入や落下を要求しない。
+        if (launchedTotal >= LAUNCH_GOAL) {
+          clearGame();
+          break;
+        }
+
         await wait(220);
 
         // 最初の落下前だけ、プレイヤーが1個を左右へ動かして連鎖を仕込める。
@@ -1164,11 +1171,6 @@
         const fallMoves = applyGravity();
         await animateMoves(fallMoves, "fall", 980);
         await wait(260);
-
-        if (launchedTotal >= LAUNCH_GOAL) {
-          clearGame();
-          break;
-        }
       }
       return chain;
     }
