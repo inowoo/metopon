@@ -331,7 +331,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.2.1</span>
+          <span id="versionBadge" class="version-badge">v0.6.1</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -375,8 +375,9 @@
         <li>ブロックを<strong>2個選んで横交換</strong></li>
         <li>同じ記号を縦か横に<strong>3個</strong>そろえる</li>
         <li>マッチした列が自動で<strong>打ち上がる</strong></li>
-        <li>落下後のマッチも自動で<strong>連鎖</strong></li>
-        <li><strong>3手ごと</strong>に下から1段追加</li>
+        <li>打ち上げ後、最初の1回だけ<strong>落下前に1個横移動</strong>できる</li>
+        <li>落下後のマッチは自動で<strong>連鎖</strong></li>
+        <li>基本<strong>3手ごと</strong>に下から1段追加（大量打ち上げで延期）</li>
       </ol>
       <p class="rule-note">考えている間は何も進みません。上の点線を越えないように、ブロックを宇宙へ飛ばしましょう。困った時は「ヒント」か「おまかせ」が使えます。</p>
       <div class="legend" aria-label="ブロックの種類">
@@ -399,7 +400,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.6.0";
+    const APP_VERSION = "0.6.1";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -750,29 +751,57 @@
       [target[a.r][a.c], target[b.r][b.c]] = [target[b.r][b.c], target[a.r][a.c]];
     }
 
-    function findMatches(target = board) {
+    function analyzeMatches(target = board) {
       const matches = new Set();
+      const lines = [];
+
       for (let r = 0; r < ROWS; r++) {
         let start = 0;
         for (let c = 1; c <= COLS; c++) {
-          if (c < COLS && target[r][c] !== null && target[r][c] === target[r][start]) continue;
-          if (target[r][start] !== null && c - start >= 3) {
-            for (let x = start; x < c; x++) matches.add(key(r, x));
+          const same = c < COLS &&
+            target[r][start] !== null &&
+            target[r][c] === target[r][start];
+          if (same) continue;
+
+          const length = c - start;
+          if (target[r][start] !== null && length >= 3) {
+            const cells = [];
+            for (let x = start; x < c; x++) {
+              matches.add(key(r, x));
+              cells.push({ r, c: x });
+            }
+            lines.push({ orientation: "h", length, cells });
           }
           start = c;
         }
       }
+
       for (let c = 0; c < COLS; c++) {
         let start = 0;
         for (let r = 1; r <= ROWS; r++) {
-          if (r < ROWS && target[r][c] !== null && target[r][c] === target[start][c]) continue;
-          if (target[start]?.[c] !== null && r - start >= 3) {
-            for (let y = start; y < r; y++) matches.add(key(y, c));
+          const same = r < ROWS &&
+            target[start][c] !== null &&
+            target[r][c] === target[start][c];
+          if (same) continue;
+
+          const length = r - start;
+          if (target[start][c] !== null && length >= 3) {
+            const cells = [];
+            for (let y = start; y < r; y++) {
+              matches.add(key(y, c));
+              cells.push({ r: y, c });
+            }
+            lines.push({ orientation: "v", length, cells });
           }
           start = r;
         }
       }
-      return matches;
+
+      return { matches, lines };
+    }
+
+    function findMatches(target = board) {
+      return analyzeMatches(target).matches;
     }
 
     function possibleMoves() {
@@ -968,17 +997,20 @@
       setMessage("交換しました。結果を確認します…");
       await animateMoves(swapMoves, "swap", 460);
 
-      if (options.showMatchReason) {
-        const reasonMatches = findMatches();
-        if (reasonMatches.size > 0) {
-          const classes = new Map();
-          for (const position of reasonMatches) classes.set(position, "auto-match-reason");
-          const first = [...reasonMatches][0].split(",").map(Number);
-          const value = board[first[0]][first[1]];
-          render(classes);
-          setMessage(`おまかせ：交換した結果、この${reasonMatches.size}個の ${SYMBOLS[value]} ${NAMES[value]} が揃いました`, "combo");
-          await waitExact(1300);
-        }
+      const reasonMatches = findMatches();
+      if (reasonMatches.size > 0) {
+        const classes = new Map();
+        for (const position of reasonMatches) classes.set(position, "auto-match-reason");
+        const first = [...reasonMatches][0].split(",").map(Number);
+        const value = board[first[0]][first[1]];
+        render(classes);
+        setMessage(
+          options.showMatchReason
+            ? `おまかせ：交換した結果、この${reasonMatches.size}個の ${SYMBOLS[value]} ${NAMES[value]} が揃いました`
+            : `この交換で${reasonMatches.size}個が揃いました。ここから打ち上げます`,
+          "combo"
+        );
+        await waitExact(options.showMatchReason ? 1300 : 650);
       }
 
       const chain = await resolveBoard();
@@ -1009,17 +1041,49 @@
       saveGame();
     }
 
-    function thrustFor(matches, column) {
-      const count = [...matches].filter(value => Number(value.split(",")[1]) === column).length;
-      if (count >= 5) return 6;
-      if (count === 4) return 4;
-      return count >= 1 ? 2 : 0;
+    function lineThrust(length) {
+      if (length >= 5) return 6;
+      if (length === 4) return 4;
+      return length >= 3 ? 2 : 0;
+    }
+
+    function thrustFor(matchInfo, column) {
+      let thrust = 0;
+      const horizontalCells = new Set();
+      const verticalCells = new Set();
+
+      for (const line of matchInfo.lines) {
+        const touchesColumn = line.cells.some(cell => cell.c === column);
+        if (!touchesColumn) continue;
+
+        // 同じラインは1回だけ加算する。
+        // 横4/5個でも、ライン長そのものから推力を決める。
+        thrust += lineThrust(line.length);
+
+        for (const cell of line.cells) {
+          if (cell.c !== column) continue;
+          const k = key(cell.r, cell.c);
+          if (line.orientation === "h") horizontalCells.add(k);
+          else verticalCells.add(k);
+        }
+      }
+
+      // 横ラインと縦ラインが交差する十字/L字は追加+2。
+      for (const k of horizontalCells) {
+        if (verticalCells.has(k)) {
+          thrust += 2;
+          break;
+        }
+      }
+
+      return thrust;
     }
 
     async function resolveBoard() {
       let chain = 0;
       while (!gameOver && chain < 30) {
-        const matches = findMatches();
+        const matchInfo = analyzeMatches();
+        const matches = matchInfo.matches;
         if (matches.size === 0) break;
 
         chain++;
@@ -1043,7 +1107,7 @@
         let launchedOut = 0;
         const launchMoves = [];
         for (const [c, topMatchRow] of affected) {
-          const thrust = thrustFor(matches, c);
+          const thrust = thrustFor(matchInfo, c);
           const moving = [];
 
           for (let r = 0; r < topMatchRow; r++) {
