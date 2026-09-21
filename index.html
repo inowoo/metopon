@@ -155,6 +155,10 @@
     .cell.block { cursor: pointer; text-shadow: 0 2px 2px #0005; }
     .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
     .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
+    .cell.push-target {
+      box-shadow: inset 0 0 0 3px var(--accent), 0 0 15px #ffd34e66;
+      filter: brightness(1.16);
+    }
     .cell.recommend {
       outline: 3px solid white;
       outline-offset: -1px;
@@ -162,25 +166,6 @@
       z-index: 6;
       filter: brightness(1.22);
       animation: recommendPulse 1.05s ease-in-out infinite;
-    }
-    .cell.recommend::after {
-      content: attr(data-recommend-order);
-      position: absolute;
-      top: -7px;
-      left: -6px;
-      width: 20px;
-      height: 20px;
-      display: grid;
-      place-items: center;
-      border: 2px solid #08101f;
-      border-radius: 50%;
-      background: white;
-      color: #08101f;
-      font-size: 14px;
-      font-weight: 900;
-      line-height: 1;
-      text-shadow: none;
-      pointer-events: none;
     }
     .cell.auto-match-reason {
       z-index: 4;
@@ -345,7 +330,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.3</span>
+          <span id="versionBadge" class="version-badge">v0.8.4</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -367,12 +352,14 @@
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
         <br><span class="clear-rule">揃ったブロック＋その上を、上端の外まで一気に打ち上げ</span><br>
+        <span class="over-rule"><strong>PUSH</strong>：8個打ち上げると、好きな列を1段押し上げられる</span><br>
         <span class="over-rule"><strong>BONUS</strong>：4個以上または2連鎖以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
       </div>
 
       <div class="controls">
         <button id="recommendBtn" class="control primary" type="button">◇ オススメ</button>
+        <button id="pushBtn" class="control" type="button">↑ PUSH 0/8</button>
         <button id="undoBtn" class="control" type="button">↶ 一手戻す</button>
         <button id="speedBtn" class="control" type="button">» 早送り</button>
         <button id="newBtn" class="control" type="button">↻ 最初から</button>
@@ -387,10 +374,11 @@
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
         <li>揃ったブロックと<strong>その上に乗っているブロックをまとめて上端の外へ</strong>打ち上げる</li>
+        <li>8個打ち上げると<strong>PUSH</strong>が使え、好きな列を1段押し上げられる</li>
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
       </ol>
-      <p class="rule-note">考えている間は何も進みません。高い位置で揃えるほど、上に乗ったブロックもまとめて飛ばせます。迷った時だけ「オススメ」で交換候補を表示できます。</p>
+      <p class="rule-note">考えている間は何も進みません。高い位置で揃えるほど上の塊もまとめて飛ばせます。PUSHが貯まったら、どの列へ介入するかを自分で選べます。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -411,12 +399,13 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.3";
+    const APP_VERSION = "0.8.4";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
     const RISE_EVERY = 3;
     const LAUNCH_GOAL = 30;
+    const PUSH_COST = 8;
     const SYMBOLS = ["●", "▲", "■", "★"];
     const NAMES = ["丸", "三角", "四角", "星"];
 
@@ -429,6 +418,7 @@
     const launchCountEl = document.getElementById("launchCount");
     const messageEl = document.getElementById("message");
     const recommendBtn = document.getElementById("recommendBtn");
+    const pushBtn = document.getElementById("pushBtn");
     const undoBtn = document.getElementById("undoBtn");
     const speedBtn = document.getElementById("speedBtn");
     const newBtn = document.getElementById("newBtn");
@@ -441,6 +431,8 @@
     let board = emptyBoard();
     let selected = null;
     let recommended = [];
+    let pushCharge = 0;
+    let pushMode = false;
     let score = 0;
     let best = Number(localStorage.getItem("metopon-best") || 0);
     let turn = 0;
@@ -654,8 +646,13 @@
       riseEl.textContent = Math.max(0, nextRiseTurn - turn);
       launchCountEl.textContent = `${launchedTotal}/${LAUNCH_GOAL}`;
       const disabled = busy || gameOver || cleared;
-      recommendBtn.disabled = disabled;
-      undoBtn.disabled = disabled || !undoState;
+      recommendBtn.disabled = disabled || pushMode;
+      pushBtn.disabled = disabled || (pushCharge < PUSH_COST && !pushMode);
+      pushBtn.classList.toggle("active", pushMode);
+      pushBtn.textContent = pushCharge >= PUSH_COST
+        ? (pushMode ? "列を選択中" : "↑ PUSH READY")
+        : `↑ PUSH ${pushCharge}/${PUSH_COST}`;
+      undoBtn.disabled = disabled || !undoState || pushMode;
       newBtn.disabled = busy;
       speedBtn.classList.toggle("active", fast);
     }
@@ -679,11 +676,11 @@
             cell.textContent = SYMBOLS[value];
             cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 ${NAMES[value]}`);
           }
+          if (pushMode) cell.classList.add("push-target");
           if (selected && selected.r === r && selected.c === c) cell.classList.add("selected");
           const recommendIndex = recommended.findIndex(p => p.r === r && p.c === c);
           if (recommendIndex >= 0) {
             cell.classList.add("recommend");
-            cell.dataset.recommendOrder = String(recommendIndex + 1);
           }
           const extra = classes.get(key(r, c));
           if (extra) cell.classList.add(extra);
@@ -846,7 +843,7 @@
 
       recommended = [moves[0].a, moves[0].b];
       selected = null;
-      setMessage("オススメは白枠の①と②。2個を選ぶと交換できます");
+      setMessage("オススメの交換候補2個を白枠で表示しました");
       render();
     }
 
@@ -873,13 +870,17 @@
     }
 
     function saveUndo() {
-      undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
+      undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn, pushCharge };
     }
 
     async function onCellClick(event) {
       const r = Number(event.currentTarget.dataset.row);
       const c = Number(event.currentTarget.dataset.col);
       if (busy || gameOver || cleared) return;
+      if (pushMode) {
+        await manualPushColumn(c);
+        return;
+      }
       if (!recommended.some(p => p.r === r && p.c === c)) recommended = [];
       if (!selected) {
         selected = { r, c };
@@ -899,6 +900,78 @@
       render();
     }
 
+    function togglePushMode() {
+      if (busy || gameOver || cleared) return;
+      if (pushMode) {
+        pushMode = false;
+        setMessage("PUSHをキャンセルしました");
+        render();
+        return;
+      }
+      if (pushCharge < PUSH_COST) return;
+      pushMode = true;
+      selected = null;
+      recommended = [];
+      setMessage("PUSHする列をタップしてください");
+      render();
+    }
+
+    async function manualPushColumn(c) {
+      if (!pushMode || pushCharge < PUSH_COST || busy || gameOver || cleared) return;
+
+      saveUndo();
+      busy = true;
+      pushMode = false;
+      pushCharge -= PUSH_COST;
+      selected = null;
+      recommended = [];
+
+      const moves = [];
+      const topValue = board[0][c];
+
+      for (let r = 0; r < ROWS - 1; r++) {
+        const value = board[r + 1][c];
+        board[r][c] = value;
+        if (value !== null) {
+          moves.push({ from: { r: r + 1, c }, to: { r, c }, value });
+        }
+      }
+
+      const newValue = randomType();
+      board[ROWS - 1][c] = newValue;
+      moves.push({ from: { r: ROWS, c }, to: { r: ROWS - 1, c }, value: newValue });
+
+      if (topValue !== null) {
+        moves.push({ from: { r: 0, c }, to: { r: -1, c }, value: topValue, matched: true });
+        launchedTotal++;
+        score += 45;
+      }
+
+      setMessage(`${c + 1}列をPUSH！`, "combo");
+      await animateMoves(moves, "rise", 900);
+
+      if (launchedTotal >= LAUNCH_GOAL) {
+        clearGame();
+        return;
+      }
+
+      if (findMatches().size) {
+        riseBonusGrantedThisMove = false;
+        await resolveBoard();
+        if (gameOver || cleared) return;
+      }
+
+      if (score > best) {
+        best = score;
+        localStorage.setItem("metopon-best", String(best));
+      }
+
+      busy = false;
+      describeReadyBoard();
+      render();
+      saveGame();
+    }
+
     function describeReadyBoard() {
       setMessage("上下左右の隣同士を2個選んで交換。3個以上揃うと自動で発射します");
     }
@@ -907,7 +980,6 @@
       while (!gameOver && !cleared && !possibleMoves().length) {
         selected = null;
         recommended = [];
-      recommended = [];
         setMessage("揃う交換がないので、自動で1段追加します", "danger");
         render();
         await wait(600);
@@ -924,6 +996,7 @@
     async function resumePlayableBoard() {
       if (busy || gameOver || cleared) return;
       busy = true;
+      pushMode = false;
       selected = null;
       recommended = [];
       riseBonusGrantedThisMove = false;
@@ -964,6 +1037,7 @@
       if (Math.abs(a.r - b.r) + Math.abs(a.c - b.c) !== 1) return;
       saveUndo();
       busy = true;
+      pushMode = false;
       riseBonusGrantedThisMove = false;
       selected = null;
       recommended = [];
@@ -1050,6 +1124,7 @@
         }
 
         launchedTotal += launchedOut;
+        pushCharge = Math.min(PUSH_COST, pushCharge + launchedOut);
 
         if (score > best) {
           best = score;
@@ -1135,6 +1210,8 @@
       turn = undoState.turn;
       launchedTotal = undoState.launchedTotal ?? 0;
       nextRiseTurn = undoState.nextRiseTurn ?? RISE_EVERY;
+      pushCharge = Number.isFinite(undoState.pushCharge) ? undoState.pushCharge : pushCharge;
+      pushMode = false;
       undoState = null;
       selected = null;
       recommended = [];
@@ -1168,7 +1245,7 @@
 
     function saveGame() {
       if (gameOver || cleared) return;
-      localStorage.setItem("metopon-save", JSON.stringify({ board, score, turn, launchedTotal, nextRiseTurn }));
+      localStorage.setItem("metopon-save", JSON.stringify({ board, score, turn, launchedTotal, nextRiseTurn, pushCharge }));
     }
 
     function loadGame() {
@@ -1179,6 +1256,8 @@
           score = Number(saved.score) || 0;
           turn = Number(saved.turn) || 0;
           launchedTotal = Number(saved.launchedTotal) || 0;
+          pushCharge = Math.max(0, Math.min(PUSH_COST, Number(saved.pushCharge) || 0));
+          pushMode = false;
           if (Number(saved.nextRiseTurn) > turn) {
             nextRiseTurn = Number(saved.nextRiseTurn);
           } else {
@@ -1199,6 +1278,8 @@
       launchedTotal = 0;
       nextRiseTurn = RISE_EVERY;
       riseBonusGrantedThisMove = false;
+      pushCharge = 0;
+      pushMode = false;
       gameOver = false;
       cleared = false;
       busy = false;
@@ -1227,6 +1308,7 @@
     });
 
     recommendBtn.addEventListener("click", showRecommendation);
+    pushBtn.addEventListener("click", togglePushMode);
     undoBtn.addEventListener("click", undo);
     speedBtn.addEventListener("click", () => {
       fast = !fast;
@@ -1237,7 +1319,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個以上揃うと、揃ったブロックとその上に乗っているブロックをひとかたまりで上端の外まで打ち上げます。途中でブロックだけ消えたり、上のブロックを追い越したりしません。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補を①②で表示します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個以上揃うと、揃ったブロックとその上に乗っているブロックをひとかたまりで上端の外まで打ち上げます。途中でブロックだけ消えたり、上のブロックを追い越したりしません。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>PUSH：</strong>打ち上げ8個で1回使えます。PUSHを押してから好きな列をタップすると、その列だけ1段せり上がります。通常の手数は消費せず、そこで揃えば即発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
       "盤面に戻る"
     ));
 
@@ -1249,7 +1331,7 @@
       showDialog(`つづきから v${APP_VERSION}`, "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ", resumePlayableBoard);
     } else {
       newGame();
-      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>揃った列は、上に乗ったブロックごと上端の外まで一気に打ち上がります。", "ゲームを始める");
+      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>打ち上げるとPUSHが貯まり、好きな列へ介入できます。", "ゲームを始める");
     }
   </script>
 </body>
