@@ -155,8 +155,35 @@
     .cell.block { cursor: pointer; text-shadow: 0 2px 2px #0005; }
     .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
     .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
+    .board.chase-mode {
+      animation: chaseBoardPulse .7s ease-in-out infinite alternate;
+    }
     .board.chase-mode .cell.block {
-      box-shadow: inset 0 0 0 2px #ffd34e66;
+      box-shadow: inset 0 0 0 2px #ffd34e99, 0 0 10px #ffd34e44;
+    }
+    .chase-banner {
+      position: absolute;
+      z-index: 20;
+      left: 50%;
+      top: 44%;
+      transform: translate(-50%, -50%) scale(.8);
+      min-width: 76%;
+      padding: 14px 10px;
+      border: 3px solid white;
+      border-radius: 16px;
+      background: #08101fee;
+      color: #fff;
+      text-align: center;
+      font-size: clamp(22px, 7vw, 38px);
+      font-weight: 1000;
+      letter-spacing: .04em;
+      pointer-events: none;
+      opacity: 0;
+      text-shadow: 0 2px 0 #000;
+      box-shadow: 0 0 30px #ffd34e88;
+    }
+    .chase-banner.show {
+      animation: chaseBannerPop .9s ease-out forwards;
     }
     .board.chase-mode .cell.selected {
       box-shadow: 0 0 0 4px white, 0 0 22px var(--accent);
@@ -208,6 +235,17 @@
     .type-2 { background: #a360d0; border: 2px double #f1c5ff; }
     .type-3 { background: #d08b24; border: 2px dotted #fff0a5; }
     @keyframes recommendPulse { 50% { box-shadow: 0 0 0 5px #08101f, 0 0 28px 9px #ffffffcc; } }
+    @keyframes chaseBoardPulse {
+      from { filter: brightness(1); }
+      to { filter: brightness(1.16); }
+    }
+    @keyframes chaseBannerPop {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(.65); }
+      18% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+      35% { transform: translate(-50%, -50%) scale(1); }
+      78% { opacity: 1; }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(1.04); }
+    }
     @keyframes autoMatchReason {
       from { transform: scale(.94); filter: brightness(1.15); }
       to { transform: scale(1.08); filter: brightness(1.8); }
@@ -332,7 +370,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.6</span>
+          <span id="versionBadge" class="version-badge">v0.8.7</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -342,17 +380,18 @@
         <div class="status-item"><span class="status-label">BEST</span><span class="status-value" id="best">0</span></div>
         <div class="status-item"><span class="status-label">TURN</span><span class="status-value" id="turn">0</span></div>
         <div class="status-item"><span class="status-label">RISE</span><span class="status-value" id="rise">3</span></div>
-        <div class="status-item"><span class="status-label">LAUNCH</span><span class="status-value" id="launchCount">0/30</span></div>
+        <div class="status-item"><span class="status-label">LAUNCH</span><span class="status-value" id="launchCount">0/40</span></div>
       </div>
 
       <div class="board-wrap">
         <div class="danger-line" aria-hidden="true"></div>
+        <div id="chaseBanner" class="chase-banner" aria-hidden="true">追撃 CHANCE!</div>
         <div id="board" class="board" role="grid" aria-label="6列10行のゲーム盤"></div>
       </div>
 
       <div id="message" class="message" aria-live="polite">上下左右に隣り合うブロックを選んでください</div>
       <div class="stage-rules" aria-label="ステージルール">
-        <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
+        <span class="clear-rule"><strong>CLEAR</strong>：上端から40個打ち上げる</span>
         <br><span class="clear-rule">揃ったブロック＋その上を、上端の外まで一気に打ち上げ</span><br>
         <span class="over-rule"><strong>追撃交換</strong>：自動連鎖が途切れた時、隣接交換を1回追加できる</span><br>
         <span class="over-rule"><strong>BONUS</strong>：4個以上または2連鎖以上でせり上がり+1手</span><br>
@@ -401,17 +440,18 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.6";
+    const APP_VERSION = "0.8.7";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
     const RISE_EVERY = 3;
-    const LAUNCH_GOAL = 30;
+    const LAUNCH_GOAL = 40;
     const SYMBOLS = ["●", "▲", "■", "★"];
     const NAMES = ["丸", "三角", "四角", "星"];
 
     const versionBadge = document.getElementById("versionBadge");
     const boardEl = document.getElementById("board");
+    const chaseBannerEl = document.getElementById("chaseBanner");
     const scoreEl = document.getElementById("score");
     const bestEl = document.getElementById("best");
     const turnEl = document.getElementById("turn");
@@ -524,7 +564,10 @@
           }
 
           if (previousTime !== null) {
-            distance += Math.min(now - previousTime, 50) * (fast ? 900 : 300) / 1000;
+            const speed = kind === "launch"
+              ? (fast ? 780 : 260)
+              : (fast ? 900 : 300);
+            distance += Math.min(now - previousTime, 50) * speed / 1000;
           }
           previousTime = now;
           const progress = totalDistance === 0 ? 1 : Math.min(1, distance / totalDistance);
@@ -651,7 +694,7 @@
       recommendBtn.disabled = disabled || chaseMode;
       chaseBtn.disabled = !chaseMode;
       chaseBtn.classList.toggle("active", chaseMode);
-      chaseBtn.textContent = chaseMode ? "追撃しない" : "追撃：発射後";
+      chaseBtn.textContent = chaseMode ? "追撃しない" : "追撃待機";
       undoBtn.disabled = disabled || !undoState || chaseMode;
       newBtn.disabled = busy;
       speedBtn.classList.toggle("active", fast);
@@ -902,8 +945,18 @@
       render();
     }
 
+    async function playChaseIntro() {
+      chaseBannerEl.classList.remove("show");
+      // Restart animation even on consecutive chase opportunities.
+      void chaseBannerEl.offsetWidth;
+      chaseBannerEl.classList.add("show");
+      await waitExact(900);
+      chaseBannerEl.classList.remove("show");
+    }
+
     function finishChaseSwap() {
       const resolve = chaseResolve;
+      chaseBannerEl.classList.remove("show");
       chaseMode = false;
       chaseSelected = null;
       chaseResolve = null;
@@ -917,15 +970,16 @@
       finishChaseSwap();
     }
 
-    function beginChaseSwap() {
-      if (gameOver || cleared) return Promise.resolve();
+    async function beginChaseSwap() {
+      if (gameOver || cleared) return;
 
       chaseMode = true;
       chaseSelected = null;
       selected = null;
       recommended = [];
-      setMessage("追撃交換：隣り合う2個を選んで交換できます。使わない時は「追撃しない」");
+      setMessage("追撃 CHANCE! 隣り合う2個をもう1回だけ交換できます", "combo");
       render();
+      await playChaseIntro();
 
       return new Promise(resolve => {
         chaseResolve = resolve;
@@ -1351,7 +1405,7 @@
       showDialog(`つづきから v${APP_VERSION}`, "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ", resumePlayableBoard);
     } else {
       newGame();
-      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>自動連鎖が途切れた時、追撃交換でもう1回だけ連鎖を狙えます。", "ゲームを始める");
+      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>自動連鎖が途切れた時は画面に「追撃 CHANCE!」が出て、もう1回だけ隣接交換できます。", "ゲームを始める");
     }
   </script>
 </body>
