@@ -338,7 +338,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.6.3</span>
+          <span id="versionBadge" class="version-badge">v0.6.4</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -407,7 +407,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.6.3";
+    const APP_VERSION = "0.6.4";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -497,11 +497,11 @@
         // ゲームの位置移動は iOS の「視差効果を減らす」によって
         // 終点へスキップしない。エフェクト類だけは reduced-motion を尊重する。
         //
-        // 通常速度は表示リフレッシュレートに依存させず、
-        // 30Hz固定で1回につき1 CSS pxだけ進める。
-        // 60Hz/120Hz端末でも速度と見た目を同じにする。
-        const normalStepMs = 1000 / 30;
-        let lastStepAt = 0;
+        // 以前の早送り（60Hzで5px/フレーム）相当の300px/秒。
+        // 経過時間で進め、60Hz/120Hzでも同じ速さ・整数座標を保つ。
+        let previousTime = null;
+        let distance = 0;
+        const totalDistance = Math.max(Math.abs(endX - startX), Math.abs(endY - startY));
 
         function finish() {
           sprite.style.left = `${endX}px`;
@@ -533,25 +533,13 @@
             return;
           }
 
-          if (fast) {
-            const fastStep = 5;
-            if (remainX !== 0) {
-              x += Math.sign(remainX) * Math.min(fastStep, Math.abs(remainX));
-            }
-            if (remainY !== 0) {
-              y += Math.sign(remainY) * Math.min(fastStep, Math.abs(remainY));
-            }
-          } else {
-            if (lastStepAt !== 0 && now - lastStepAt < normalStepMs) {
-              requestAnimationFrame(frameStep);
-              return;
-            }
-            lastStepAt = now;
-
-            // 通常速度は、この1回で各軸を必ず最大1pxだけ進める。
-            if (remainX !== 0) x += Math.sign(remainX);
-            if (remainY !== 0) y += Math.sign(remainY);
+          if (previousTime !== null) {
+            distance += Math.min(now - previousTime, 50) * (fast ? 900 : 300) / 1000;
           }
+          previousTime = now;
+          const progress = totalDistance === 0 ? 1 : Math.min(1, distance / totalDistance);
+          x = Math.round(startX + (endX - startX) * progress);
+          y = Math.round(startY + (endY - startY) * progress);
 
           sprite.style.left = `${x}px`;
           sprite.style.top = `${y}px`;
@@ -579,7 +567,7 @@
       boardEl.appendChild(layer);
 
       // 位置移動は reduced-motion でも省略しない。
-      // ユーザー操作に直結するゲーム状態変化を1pxずつ見せる。
+      // ユーザー操作に直結するゲーム状態変化を整数座標で見せる。
       const duration = fast ? ms / 3 : ms;
       const animations = [];
 
@@ -605,7 +593,7 @@
         if (m.value === null) continue;
 
         const sprite = document.createElement("div");
-        sprite.className = `cell block type-${m.value} motion-block${kind === "launch" ? " jet" : ""}${kind === "rise" ? " rising" : ""}`;
+        sprite.className = `cell block type-${m.value} motion-block${kind === "launch" && m.matched ? " jet matched-rocket" : ""}${kind === "rise" ? " rising" : ""}`;
         sprite.textContent = SYMBOLS[m.value];
 
         const fromX = first.left - origin.left + m.from.c * stepX;
@@ -656,61 +644,6 @@
         return [cellAnim, burstAnim];
       });
       await Promise.all(animations.map(a => a.finished.catch(() => {})));
-    }
-
-    async function animateMatchedRockets(matches) {
-      render();
-
-      const cells = [...boardEl.children];
-      const origin = boardEl.getBoundingClientRect();
-      const first = cells[0].getBoundingClientRect();
-      const stepX = cells[1].getBoundingClientRect().left - first.left;
-      const stepY = cells[COLS].getBoundingClientRect().top - first.top;
-      const layer = document.createElement("div");
-      layer.className = "motion-layer";
-      layer.setAttribute("aria-hidden", "true");
-      boardEl.appendChild(layer);
-
-      const animations = [];
-      for (const position of matches) {
-        const [r, c] = position.split(",").map(Number);
-        const value = board[r][c];
-        if (value === null) continue;
-
-        cells[r * COLS + c].style.visibility = "hidden";
-
-        const sprite = document.createElement("div");
-        sprite.className = `cell block type-${value} motion-block jet matched-rocket`;
-        sprite.textContent = SYMBOLS[value];
-
-        const fromX = first.left - origin.left + c * stepX;
-        const fromY = first.top - origin.top + r * stepY;
-        const toX = fromX;
-        const toY = first.top - origin.top - first.height * 1.6;
-
-        Object.assign(sprite.style, {
-          left: `${Math.round(fromX)}px`,
-          top: `${Math.round(fromY)}px`,
-          width: `${first.width}px`,
-          height: `${first.height}px`,
-          willChange: "left, top"
-        });
-
-        layer.appendChild(sprite);
-
-        // 揃ったブロック自身がロケットとして上端まで飛んでいく。
-        // animateSpriteByPixels() を通すので、座標は整数ピクセルで更新する。
-        animations.push(
-          animateSpriteByPixels(sprite, fromX, fromY, toX, toY, fast ? 400 : 1250, "matchedRocket")
-        );
-      }
-
-      try {
-        await Promise.all(animations);
-      } finally {
-        layer.remove();
-        render();
-      }
     }
 
     function setMessage(text, mode = "") {
@@ -1131,41 +1064,42 @@
         setMessage(chain === 1 ? `${matches.size}個マッチ！ 点火！` : `${chain}連鎖！ 点火！`, "combo");
         await animateMatch(matches);
 
+        // 各列の一番下の点火ブロックまでを、同じ推力で一斉に運ぶ。
+        // 複数のマッチの間にある、揃っていないブロックも置き去りにしない。
         const affected = new Map();
         for (const position of matches) {
           const [r, c] = position.split(",").map(Number);
-          if (!affected.has(c) || r < affected.get(c)) affected.set(c, r);
-        }
-
-        setMessage(chain === 1 ? "揃ったブロックを打ち上げ！" : `${chain}連鎖・ロケット発射！`, "combo");
-        await animateMatchedRockets(matches);
-
-        for (const position of matches) {
-          const [r, c] = position.split(",").map(Number);
-          board[r][c] = null;
+          affected.set(c, Math.max(affected.get(c) ?? -1, r));
         }
 
         let launchedOut = 0;
         const launchMoves = [];
-        for (const [c, topMatchRow] of affected) {
+        for (const [c, bottomMatchRow] of affected) {
           const thrust = thrustFor(matchInfo, c);
           const moving = [];
-
-          for (let r = 0; r < topMatchRow; r++) {
-            if (board[r][c] !== null) moving.push({ r, value: board[r][c] });
+          for (let r = 0; r <= bottomMatchRow; r++) {
+            if (board[r][c] !== null) {
+              moving.push({ r, value: board[r][c], matched: matches.has(key(r, c)) });
+            }
             board[r][c] = null;
           }
-
           for (const item of moving) {
             const nr = item.r - thrust;
-            launchMoves.push({ from: { r: item.r, c }, to: { r: nr, c }, value: item.value });
-            if (nr < 0) {
-              launchedOut++;
-            } else {
-              board[nr][c] = item.value;
+            launchMoves.push({
+              from: { r: item.r, c }, to: { r: nr, c },
+              value: item.value, matched: item.matched
+            });
+            // 点火ブロックは運び終えて消える。上に載る通常ブロックだけ
+            // 盤面へ戻すか、上端を越えた場合にLAUNCHへ加算する。
+            if (!item.matched) {
+              if (nr < 0) launchedOut++;
+              else board[nr][c] = item.value;
             }
           }
         }
+
+        setMessage("上に乗ったブロックと一緒に打ち上げ！", "combo");
+        await animateMoves(launchMoves, "launch", 1200);
 
         const gained = (matches.size * 10 + launchedOut * 35) * chain;
         score += gained;
@@ -1192,8 +1126,6 @@
             : `${chain}連鎖！ +${gained}`,
           "combo"
         );
-
-        await animateMoves(launchMoves, "launch", 1200);
 
         // 目標数を飛ばした時点で即クリア。不要な介入や落下を要求しない。
         if (launchedTotal >= LAUNCH_GOAL) {
@@ -1234,7 +1166,7 @@
     }
 
     async function addRow() {
-      setMessage("せり上がり：盤面全体と新しい段が下から1pxずつ上昇します", "danger");
+      setMessage("せり上がり：盤面全体と新しい段が下から上昇します", "danger");
       await wait(760);
       if (board[0].some(value => value !== null)) {
         endGame();
@@ -1449,3 +1381,4 @@
   </script>
 </body>
 </html>
+
