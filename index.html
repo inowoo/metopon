@@ -159,7 +159,17 @@
       animation: chaseBoardPulse .7s ease-in-out infinite alternate;
     }
     .board.chase-mode .cell.block {
-      box-shadow: inset 0 0 0 2px #ffd34e99, 0 0 10px #ffd34e44;
+      opacity: .62;
+    }
+    .board.chase-mode .cell.chase-candidate {
+      opacity: 1;
+      box-shadow: inset 0 0 0 3px #ffd34e, 0 0 18px #ffd34e99;
+      filter: brightness(1.2);
+    }
+    .board.chase-mode .cell.chase-partner {
+      opacity: 1;
+      box-shadow: inset 0 0 0 4px #fff, 0 0 22px #ffffffbb;
+      animation: recommendPulse .7s ease-in-out infinite;
     }
     .chase-banner {
       position: absolute;
@@ -186,7 +196,8 @@
       animation: chaseBannerPop .9s ease-out forwards;
     }
     .board.chase-mode .cell.selected {
-      box-shadow: 0 0 0 4px white, 0 0 22px var(--accent);
+      opacity: 1;
+      box-shadow: 0 0 0 4px white, 0 0 24px var(--accent);
     }
     .cell.recommend {
       outline: 3px solid white;
@@ -245,6 +256,11 @@
       35% { transform: translate(-50%, -50%) scale(1); }
       78% { opacity: 1; }
       100% { opacity: 0; transform: translate(-50%, -50%) scale(1.04); }
+    }
+    @keyframes burnout {
+      0% { opacity: 1; transform: scale(1); filter: brightness(1); }
+      45% { opacity: 1; transform: scale(1.25); filter: brightness(2.4); }
+      100% { opacity: 0; transform: scale(.3); filter: brightness(3); }
     }
     @keyframes autoMatchReason {
       from { transform: scale(.94); filter: brightness(1.15); }
@@ -370,7 +386,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.7</span>
+          <span id="versionBadge" class="version-badge">v0.8.8</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -392,7 +408,7 @@
       <div id="message" class="message" aria-live="polite">上下左右に隣り合うブロックを選んでください</div>
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から40個打ち上げる</span>
-        <br><span class="clear-rule">揃ったブロック＋その上を、上端の外まで一気に打ち上げ</span><br>
+        <br><span class="clear-rule">3個=推力4 / 4個=6 / 5個以上=8（上の重量で減衰）</span><br>
         <span class="over-rule"><strong>追撃交換</strong>：自動連鎖が途切れた時、隣接交換を1回追加できる</span><br>
         <span class="over-rule"><strong>BONUS</strong>：4個以上または2連鎖以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
@@ -414,12 +430,12 @@
         <li><strong>上下左右に隣り合う2個</strong>を選んで交換</li>
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
-        <li>揃ったブロックと<strong>その上に乗っているブロックをまとめて上端の外へ</strong>打ち上げる</li>
+        <li><strong>揃う数が多いほど推力UP</strong>。上に乗るブロックが多いほど重くなり上昇量DOWN</li>
         <li>自動連鎖が途切れた時、<strong>隣接交換を1回だけ追加</strong>できる</li>
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
       </ol>
-      <p class="rule-note">考えている間は何も進みません。自動連鎖が止まった時だけ追撃交換のチャンス。いつもの隣接交換をもう1回使って連鎖を伸ばせます。</p>
+      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。ただし上にブロックが多い列ほど重くなります。追撃では、揃えられる交換だけが光ります。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -440,7 +456,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.7";
+    const APP_VERSION = "0.8.8";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -475,6 +491,7 @@
     let chaseMode = false;
     let chaseSelected = null;
     let chaseResolve = null;
+    let chaseMoves = [];
     let score = 0;
     let best = Number(localStorage.getItem("metopon-best") || 0);
     let turn = 0;
@@ -643,7 +660,21 @@
         });
 
         layer.appendChild(sprite);
-        animations.push(animateSpriteByPixels(sprite, fromX, fromY, toX, toY, duration, kind));
+        const motion = animateSpriteByPixels(sprite, fromX, fromY, toX, toY, duration, kind);
+        if (m.burnout) {
+          animations.push(motion.then(async () => {
+            const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+            if (reduced) return;
+            const burn = sprite.animate([
+              { opacity: 1, transform: "scale(1)", filter: "brightness(1.25)" },
+              { opacity: 1, transform: "scale(1.25)", filter: "brightness(2.4)", offset: .45 },
+              { opacity: 0, transform: "scale(.3)", filter: "brightness(3)" }
+            ], { duration: fast ? 90 : 420, easing: "ease-out", fill: "forwards" });
+            await burn.finished.catch(() => {});
+          }));
+        } else {
+          animations.push(motion);
+        }
       }
 
       try {
@@ -720,7 +751,22 @@
             cell.textContent = SYMBOLS[value];
             cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 ${NAMES[value]}`);
           }
-          if (chaseMode && chaseSelected && chaseSelected.r === r && chaseSelected.c === c) cell.classList.add("selected");
+          if (chaseMode) {
+            const inAnyMove = chaseMoves.some(m =>
+              (m.a.r === r && m.a.c === c) || (m.b.r === r && m.b.c === c)
+            );
+            if (inAnyMove) cell.classList.add("chase-candidate");
+
+            if (chaseSelected) {
+              const isPartner = chaseMoves.some(m =>
+                ((m.a.r === chaseSelected.r && m.a.c === chaseSelected.c) && (m.b.r === r && m.b.c === c)) ||
+                ((m.b.r === chaseSelected.r && m.b.c === chaseSelected.c) && (m.a.r === r && m.a.c === c))
+              );
+              if (isPartner) cell.classList.add("chase-partner");
+            }
+
+            if (chaseSelected.r === r && chaseSelected.c === c) cell.classList.add("selected");
+          }
           if (!chaseMode && selected && selected.r === r && selected.c === c) cell.classList.add("selected");
           const recommendIndex = recommended.findIndex(p => p.r === r && p.c === c);
           if (recommendIndex >= 0) {
@@ -829,6 +875,12 @@
       return moves;
     }
 
+    function baseThrustForLength(length) {
+      if (length >= 5) return 8;
+      if (length === 4) return 6;
+      return 4;
+    }
+
     function forecastMove(a, b) {
       const trial = copyBoard();
       swapOn(trial, a, b);
@@ -844,16 +896,29 @@
         }
       }
 
-      const affected = new Map();
+      const columns = new Map();
       for (const position of info.matches) {
         const [r, c] = position.split(",").map(Number);
-        affected.set(c, Math.max(affected.get(c) ?? -1, r));
+        if (!columns.has(c)) columns.set(c, { topMatch: r, baseThrust: 0 });
+        columns.get(c).topMatch = Math.min(columns.get(c).topMatch, r);
+      }
+      for (const line of info.lines) {
+        const thrust = baseThrustForLength(line.length);
+        for (const p of line.cells) {
+          if (columns.has(p.c)) {
+            columns.get(p.c).baseThrust = Math.max(columns.get(p.c).baseThrust, thrust);
+          }
+        }
       }
 
-      let launched = 0;
-      for (const [c, bottom] of affected) {
-        for (let r = 0; r <= bottom; r++) {
-          if (trial[r][c] !== null) launched++;
+      let launched = info.matches.size;
+      for (const [c, col] of columns) {
+        let load = 0;
+        for (let r = 0; r < col.topMatch; r++) if (trial[r][c] !== null) load++;
+        const effectiveThrust = Math.max(1, col.baseThrust - Math.floor(load / 2));
+
+        for (let r = 0; r < col.topMatch; r++) {
+          if (trial[r][c] !== null && r - effectiveThrust < 0) launched++;
         }
       }
 
@@ -960,6 +1025,7 @@
       chaseMode = false;
       chaseSelected = null;
       chaseResolve = null;
+      chaseMoves = [];
       render();
       if (resolve) resolve();
     }
@@ -973,11 +1039,17 @@
     async function beginChaseSwap() {
       if (gameOver || cleared) return;
 
+      chaseMoves = possibleMoves();
+      if (!chaseMoves.length) {
+        setMessage("追撃できる交換がありません。この手番を終了します");
+        return;
+      }
+
       chaseMode = true;
       chaseSelected = null;
       selected = null;
       recommended = [];
-      setMessage("追撃 CHANCE! 隣り合う2個をもう1回だけ交換できます", "combo");
+      setMessage("追撃 CHANCE! 黄色く光るブロックから選んでください", "combo");
       render();
       await playChaseIntro();
 
@@ -988,14 +1060,19 @@
 
     async function handleChaseClick(r, c) {
       if (!chaseMode) return;
-      if (board[r][c] === null) {
-        setMessage("ブロックを選んでください");
-        return;
-      }
+      if (board[r][c] === null) return;
 
       if (!chaseSelected) {
+        const isCandidate = chaseMoves.some(m =>
+          (m.a.r === r && m.a.c === c) || (m.b.r === r && m.b.c === c)
+        );
+        if (!isCandidate) {
+          setMessage("黄色く光っているブロックを選んでください");
+          return;
+        }
+
         chaseSelected = { r, c };
-        setMessage("追撃交換：上下左右の隣のブロックを選んでください");
+        setMessage("白く光った相手を選ぶと追撃交換します");
         render();
         return;
       }
@@ -1007,10 +1084,22 @@
         return;
       }
 
-      if (Math.abs(chaseSelected.r - r) + Math.abs(chaseSelected.c - c) !== 1) {
-        chaseSelected = { r, c };
-        setMessage("追撃交換するブロックを選び直しました");
-        render();
+      const validMove = chaseMoves.find(m =>
+        ((m.a.r === chaseSelected.r && m.a.c === chaseSelected.c) && (m.b.r === r && m.b.c === c)) ||
+        ((m.b.r === chaseSelected.r && m.b.c === chaseSelected.c) && (m.a.r === r && m.a.c === c))
+      );
+
+      if (!validMove) {
+        const isCandidate = chaseMoves.some(m =>
+          (m.a.r === r && m.a.c === c) || (m.b.r === r && m.b.c === c)
+        );
+        if (isCandidate) {
+          chaseSelected = { r, c };
+          setMessage("選び直しました。白く光った相手を選んでください");
+          render();
+        } else {
+          setMessage("追撃できる組み合わせを選んでください");
+        }
         return;
       }
 
@@ -1024,11 +1113,9 @@
       swapOn(board, a, b);
       chaseMode = false;
       chaseSelected = null;
-      setMessage("追撃交換！", "combo");
+      chaseMoves = [];
+      setMessage("追撃成功！ 連鎖続行！", "combo");
       await animateMoves(moves, "swap", 460);
-
-      const matched = findMatches().size > 0;
-      setMessage(matched ? "追撃成功！ 連鎖続行！" : "追撃交換しました。連鎖はここで終了", matched ? "combo" : "");
 
       const resolve = chaseResolve;
       chaseResolve = null;
@@ -1105,6 +1192,7 @@
       chaseMode = false;
       chaseSelected = null;
       chaseResolve = null;
+      chaseMoves = [];
       riseBonusGrantedThisMove = false;
       selected = null;
       recommended = [];
@@ -1139,45 +1227,96 @@
           }
         }
 
-        // 各列で一番下にあるマッチ位置を発射台にする。
-        // その位置より上の全ブロックを同じ距離だけ運び、
-        // 一番下のマッチが上端の外へ出るところまで一気に打ち上げる。
-        const affected = new Map();
+        const columns = new Map();
         for (const position of matches) {
           const [r, c] = position.split(",").map(Number);
-          affected.set(c, Math.max(affected.get(c) ?? -1, r));
+          if (!columns.has(c)) {
+            columns.set(c, {
+              topMatch: r,
+              bottomMatch: r,
+              baseThrust: 0,
+              matchedRows: new Set()
+            });
+          }
+          const info = columns.get(c);
+          info.topMatch = Math.min(info.topMatch, r);
+          info.bottomMatch = Math.max(info.bottomMatch, r);
+          info.matchedRows.add(r);
+        }
+
+        for (const line of lines) {
+          const thrust = baseThrustForLength(line.length);
+          for (const p of line.cells) {
+            if (!columns.has(p.c)) continue;
+            columns.get(p.c).baseThrust = Math.max(columns.get(p.c).baseThrust, thrust);
+          }
         }
 
         const longest = lines.reduce((m, line) => Math.max(m, line.length), 0);
         const crossMatch = [...cellOrientations.values()].some(set => set.size >= 2);
         const headline = longest >= 4
-          ? `${longest}個マッチ！ 大打ち上げ！`
+          ? `${longest}個マッチ！ 高推力！`
           : chain === 1 ? `${matches.size}個マッチ！ 発射！` : `${chain}連鎖！ 発射！`;
         setMessage(headline, "combo");
         await animateMatch(matches);
 
         let launchedOut = 0;
         const launchMoves = [];
+        const placements = [];
+        const thrustNotes = [];
 
-        for (const [c, bottomMatchRow] of affected) {
-          const launchDistance = bottomMatchRow + 1;
+        for (const [c, info] of columns) {
+          let load = 0;
+          for (let r = 0; r < info.topMatch; r++) {
+            if (board[r][c] !== null) load++;
+          }
 
-          for (let r = 0; r <= bottomMatchRow; r++) {
+          // 上に2個乗るごとに必要推力+1とみなし、実際の上昇距離を1減らす。
+          const effectiveThrust = Math.max(1, info.baseThrust - Math.floor(load / 2));
+          thrustNotes.push(`${c + 1}列:${info.baseThrust}→${effectiveThrust}`);
+
+          // 上の積み荷は実効推力ぶんだけ上昇。上端を越えなければ盤面に残る。
+          for (let r = 0; r < info.topMatch; r++) {
             const value = board[r][c];
             if (value === null) continue;
 
             board[r][c] = null;
+            const nr = r - effectiveThrust;
             launchMoves.push({
               from: { r, c },
-              to: { r: r - launchDistance, c },
+              to: { r: nr, c },
               value,
-              matched: matches.has(key(r, c))
+              matched: false
+            });
+
+            if (nr < 0) {
+              launchedOut++;
+            } else {
+              placements.push({ r: nr, c, value });
+            }
+          }
+
+          // 揃ったブロック自身は推力源。同じ距離上昇して到達点で燃焼する。
+          for (const r of info.matchedRows) {
+            const value = board[r][c];
+            if (value === null) continue;
+
+            board[r][c] = null;
+            const nr = r - effectiveThrust;
+            launchMoves.push({
+              from: { r, c },
+              to: { r: nr, c },
+              value,
+              matched: true,
+              burnout: true
             });
             launchedOut++;
           }
         }
 
-        setMessage("上に乗ったブロックごと、そのまま上端の外へ打ち抜く！", "combo");
+        for (const p of placements) board[p.r][p.c] = p.value;
+
+        setMessage(`推力 / 重量 → 実効：${thrustNotes.join("  ")}`, "combo");
         await animateMoves(launchMoves, "launch", 1450);
 
         const bigMatch = lines.some(line => line.length >= 4);
@@ -1287,6 +1426,7 @@
       chaseMode = false;
       chaseSelected = null;
       chaseResolve = null;
+      chaseMoves = [];
       undoState = null;
       selected = null;
       recommended = [];
@@ -1354,6 +1494,7 @@
       chaseMode = false;
       chaseSelected = null;
       chaseResolve = null;
+      chaseMoves = [];
       gameOver = false;
       cleared = false;
       busy = false;
@@ -1393,7 +1534,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個以上揃うと、揃ったブロックとその上に乗っているブロックをひとかたまりで上端の外まで打ち上げます。途中でブロックだけ消えたり、上のブロックを追い越したりしません。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>追撃交換：</strong>発射と自然な自動連鎖が終わった時、同じ手番のまま隣接交換を1回だけ追加できます。追撃で3個以上揃えば、連鎖数を引き継いで追加発射します。使わない場合は「追撃しない」で終了します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個=推力4、4個=6、5個以上=8。上に乗るブロック2個ごとに実効推力が1下がります。揃ったブロックは推力源として上昇後に燃焼し、上のブロックは実効推力ぶんだけ上昇して盤面に残ります。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>追撃交換：</strong>自然連鎖が止まった時、3個以上を作れる交換がある場合だけ発生します。候補ブロックが黄色く光り、1個選ぶと交換相手だけ白く光ります。追撃で揃えば連鎖を引き継いで追加発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
       "盤面に戻る"
     ));
 
@@ -1405,7 +1546,7 @@
       showDialog(`つづきから v${APP_VERSION}`, "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ", resumePlayableBoard);
     } else {
       newGame();
-      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>自動連鎖が途切れた時は画面に「追撃 CHANCE!」が出て、もう1回だけ隣接交換できます。", "ゲームを始める");
+      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>揃う数と上に乗る重さで上昇量が変わります。自然連鎖が途切れた時は、揃えられる追撃候補だけが光ります。", "ゲームを始める");
     }
   </script>
 </body>
