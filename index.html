@@ -153,6 +153,9 @@
     }
 
     .cell.block { cursor: pointer; text-shadow: 0 2px 2px #0005; }
+    .cell.spent {
+      box-shadow: inset 0 0 0 2px #dfe8ff88;
+    }
     .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
     .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
     .cell.chase-candidate {
@@ -356,7 +359,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.12</span>
+          <span id="versionBadge" class="version-badge">v0.8.13</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -405,7 +408,7 @@
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
       </ol>
-      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。ただし上にブロックが多い列ほど重くなります。追撃では、揃えられる交換だけが光ります。</p>
+      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。上端を越えなかったブロックは消えず盤面に残ります。追撃では、揃えられる交換だけが光ります。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -426,7 +429,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.12";
+    const APP_VERSION = "0.8.13";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -481,6 +484,37 @@
 
     function copyBoard(source = board) {
       return source.map(row => [...row]);
+    }
+
+    function baseType(value) {
+      return value === null ? null : value % TYPES;
+    }
+
+    function isSpent(value) {
+      return value !== null && value >= TYPES;
+    }
+
+    function spendBlock(value) {
+      if (value === null) return null;
+      return isSpent(value) ? value : value + TYPES;
+    }
+
+    function wakeBlockAt(p) {
+      const value = board[p.r][p.c];
+      if (isSpent(value)) board[p.r][p.c] = baseType(value);
+    }
+
+    function refreshSpentBlocks() {
+      const normalized = board.map(row => row.map(value => baseType(value)));
+      const stillMatched = analyzeMatches(normalized).matches;
+
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (isSpent(board[r][c]) && !stillMatched.has(key(r, c))) {
+            board[r][c] = baseType(board[r][c]);
+          }
+        }
+      }
     }
 
     function randomType() {
@@ -613,8 +647,9 @@
         if (m.value === null) continue;
 
         const sprite = document.createElement("div");
-        sprite.className = `cell block type-${m.value} motion-block${kind === "launch" && m.matched ? " jet matched-rocket" : ""}${kind === "rise" ? " rising" : ""}`;
-        sprite.textContent = SYMBOLS[m.value];
+        const spriteType = baseType(m.value);
+        sprite.className = `cell block type-${spriteType} motion-block${kind === "launch" && m.matched ? " jet matched-rocket" : ""}${kind === "rise" ? " rising" : ""}`;
+        sprite.textContent = SYMBOLS[spriteType];
 
         const fromX = first.left - origin.left + m.from.c * stepX;
         const fromY = first.top - origin.top + m.from.r * stepY;
@@ -631,20 +666,7 @@
 
         layer.appendChild(sprite);
         const motion = animateSpriteByPixels(sprite, fromX, fromY, toX, toY, duration, kind);
-        if (m.burnout) {
-          animations.push(motion.then(async () => {
-            const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-            if (reduced) return;
-            const burn = sprite.animate([
-              { opacity: 1, transform: "scale(1)", filter: "brightness(1.25)" },
-              { opacity: 1, transform: "scale(1.25)", filter: "brightness(2.4)", offset: .45 },
-              { opacity: 0, transform: "scale(.3)", filter: "brightness(3)" }
-            ], { duration: fast ? 90 : 420, easing: "ease-out", fill: "forwards" });
-            await burn.finished.catch(() => {});
-          }));
-        } else {
-          animations.push(motion);
-        }
+        animations.push(motion);
       }
 
       try {
@@ -706,6 +728,7 @@
       for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
           const value = board[r][c];
+          const displayType = baseType(value);
           const cell = document.createElement("button");
           cell.type = "button";
           cell.className = "cell";
@@ -716,9 +739,10 @@
             cell.classList.add("empty");
             cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 空き`);
           } else {
-            cell.classList.add("block", `type-${value}`);
-            cell.textContent = SYMBOLS[value];
-            cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 ${NAMES[value]}`);
+            cell.classList.add("block", `type-${displayType}`);
+            if (isSpent(value)) cell.classList.add("spent");
+            cell.textContent = SYMBOLS[displayType];
+            cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 ${NAMES[displayType]}${isSpent(value) ? " 発射直後" : ""}`);
           }
           if (chaseMode) {
             const inAnyMove = chaseMoves.some(m =>
@@ -783,11 +807,12 @@
         for (let c = 1; c <= COLS; c++) {
           const same = c < COLS &&
             target[r][start] !== null &&
+            !isSpent(target[r][start]) &&
             target[r][c] === target[r][start];
           if (same) continue;
 
           const length = c - start;
-          if (target[r][start] !== null && length >= 3) {
+          if (target[r][start] !== null && !isSpent(target[r][start]) && length >= 3) {
             const cells = [];
             for (let x = start; x < c; x++) {
               matches.add(key(r, x));
@@ -804,11 +829,12 @@
         for (let r = 1; r <= ROWS; r++) {
           const same = r < ROWS &&
             target[start][c] !== null &&
+            !isSpent(target[start][c]) &&
             target[r][c] === target[start][c];
           if (same) continue;
 
           const length = r - start;
-          if (target[start][c] !== null && length >= 3) {
+          if (target[start][c] !== null && !isSpent(target[start][c]) && length >= 3) {
             const cells = [];
             for (let y = start; y < r; y++) {
               matches.add(key(y, c));
@@ -1159,6 +1185,8 @@
       if (busy || gameOver || cleared) return;
       if (Math.abs(a.r - b.r) + Math.abs(a.c - b.c) !== 1) return;
       saveUndo();
+      wakeBlockAt(a);
+      wakeBlockAt(b);
       busy = true;
       chaseMode = false;
       chaseSelected = null;
@@ -1267,7 +1295,8 @@
             }
           }
 
-          // 揃ったブロック自身は推力源。同じ距離上昇して到達点で燃焼する。
+          // 揃ったブロック自身も同じ推力で上昇する。
+          // 上端を越えた時だけ消え、盤面内なら「発射済み」としてその位置に残す。
           for (const r of info.matchedRows) {
             const value = board[r][c];
             if (value === null) continue;
@@ -1278,10 +1307,14 @@
               from: { r, c },
               to: { r: nr, c },
               value,
-              matched: true,
-              burnout: true
+              matched: true
             });
-            if (nr < 0) launchedOut++;
+
+            if (nr < 0) {
+              launchedOut++;
+            } else {
+              placements.push({ r: nr, c, value: spendBlock(value) });
+            }
           }
         }
 
@@ -1329,6 +1362,8 @@
 
         const fallMoves = applyGravity();
         await animateMoves(fallMoves, "fall", 980);
+        refreshSpentBlocks();
+        render();
         await wait(260);
 
         // 自然連鎖が続く間は止めない。途切れた時だけ追撃交換を1回だけ出す。
@@ -1385,6 +1420,8 @@
       board.push(row);
       row.forEach((value,c) => riseMoves.push({from:{r:ROWS,c},to:{r:ROWS-1,c},value}));
       await animateMoves(riseMoves, "rise", 900);
+      refreshSpentBlocks();
+      render();
     }
 
     function undo() {
@@ -1505,7 +1542,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個=推力2、4個=4、5個以上=6。上に乗るブロック1個ごとに実効推力が1下がります。揃ったブロックは推力源として上昇後に燃焼し、上のブロックは実効推力ぶんだけ上昇して盤面に残ります。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>追撃交換：</strong>自然連鎖が止まった時、3個以上を作れる交換がある場合だけ発生します。候補ブロックが黄色く光り、1個選ぶと交換相手だけ白く光ります。追撃で揃えば連鎖を引き継いで追加発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個=推力2、4個=4、5個以上=6。上に乗るブロック1個ごとに実効推力が1下がります。揃ったブロック自身も実効推力ぶんだけ上昇し、上端を越えなければ盤面に残ります。発射直後は同じ並びの即再点火を防ぐため一時的に発射済み状態になります。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>追撃交換：</strong>自然連鎖が止まった時、3個以上を作れる交換がある場合だけ発生します。候補ブロックが黄色く光り、1個選ぶと交換相手だけ白く光ります。追撃で揃えば連鎖を引き継いで追加発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
       "盤面に戻る"
     ));
 
