@@ -1113,7 +1113,12 @@
           score = Number(saved.score) || 0;
           turn = Number(saved.turn) || 0;
           launchedTotal = Number(saved.launchedTotal) || 0;
-          nextRiseTurn = Number(saved.nextRiseTurn) || RISE_EVERY;
+          if (Number(saved.nextRiseTurn) > turn) {
+            nextRiseTurn = Number(saved.nextRiseTurn);
+          } else {
+            const remainder = turn % RISE_EVERY;
+            nextRiseTurn = turn + (remainder === 0 ? RISE_EVERY : RISE_EVERY - remainder);
+          }
           return true;
         }
       } catch (_) {
