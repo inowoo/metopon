@@ -906,11 +906,15 @@
 
     function collectFallingCandidates() {
       const out = [];
+      // 現在の「上端まで打ち抜く」ルールでは自然落下が少ないため、
+      // 発射後に各列の一番上に残ったブロックを「落下させる候補」とする。
+      // 別列へ送った後、そのブロックは通常重力で落下する。
       for (let c = 0; c < COLS; c++) {
-        let gapBelow = false;
-        for (let r = ROWS - 1; r >= 0; r--) {
-          if (board[r][c] === null) gapBelow = true;
-          else if (gapBelow) out.push({ r, c });
+        for (let r = 0; r < ROWS; r++) {
+          if (board[r][c] !== null) {
+            out.push({ r, c });
+            break;
+          }
         }
       }
       return out;
@@ -949,7 +953,7 @@
       rerouteSelected = null;
       selected = null;
       recommended = [];
-      setMessage("介入チャンス：光っている落下ブロックを1個選ぶか、「介入しない」");
+      setMessage("介入チャンス：光っているブロックを1個選び、別の列へ落とせます");
       render();
       return new Promise(resolve => { rerouteResolve = resolve; });
     }
@@ -960,7 +964,7 @@
       if (!rerouteSelected) {
         const candidate = rerouteCandidates.find(p => p.r === r && p.c === c);
         if (!candidate) {
-          setMessage("光っている落下ブロックを1個選んでください");
+          setMessage("光っているブロックを1個選んでください");
           return;
         }
         rerouteSelected = { r, c };
