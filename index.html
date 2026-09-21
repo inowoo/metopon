@@ -371,7 +371,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.17</span>
+          <span id="versionBadge" class="version-badge">v0.8.18</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -393,8 +393,8 @@
       <div id="message" class="message" aria-live="polite">上下左右に隣り合うブロックを選んでください</div>
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
-        <br><span class="clear-rule">3個=4.5 / 4個=6.0 / 5個以上=8.0（上1個ごとに-0.35）</span><br>
-        <span class="over-rule"><strong>追撃交換</strong>：自動連鎖が途切れた時、隣接交換を1回追加できる</span><br>
+        <br><span class="clear-rule">3個=5.25 / 4個=6.75 / 5個以上=8.75（上1個ごとに-0.30）</span><br>
+        <span class="over-rule"><strong>追撃交換</strong>：発射が頂点に達した後、重力落下前に隣接交換を1回追加できる</span><br>
         <span class="over-rule"><strong>BONUS</strong>：4個以上または2連鎖以上でせり上がり+1手</span><br>
         <span class="over-rule"><strong>GAME OVER</strong>：せり上がり時に上端のブロックが押し出される</span>
       </div>
@@ -415,12 +415,12 @@
         <li><strong>上下左右に隣り合う2個</strong>を選んで交換</li>
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
-        <li><strong>揃う数が多いほど推力UP</strong>。上に乗るブロック1個ごとに推力を0.35消費</li>
-        <li>自動連鎖が途切れた時、<strong>隣接交換を1回だけ追加</strong>できる</li>
+        <li><strong>揃う数が多いほど推力UP</strong>。上に乗るブロック1個ごとに推力を0.30消費</li>
+        <li>発射が頂点に達した後、<strong>重力落下前に隣接交換を1回だけ追加</strong>できる</li>
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
       </ol>
-      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。上端を越えなかったマッチブロックは落下後に別種類へ変化して盤面に残ります。追撃では、揃えられる交換だけが光ります。</p>
+      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。上端を越えなかったマッチブロックは落下後に別種類へ変化して盤面に残ります。追撃では、重力落下する前の盤面で揃えられる交換だけが光ります。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -441,18 +441,18 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.17";
+    const APP_VERSION = "0.8.18";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
     const RISE_EVERY = 3;
     const LAUNCH_GOAL = 30;
     // 小数で調整できる発射パラメータ。盤面上の「1.0 = 1マス」。
-    const THRUST_3 = 4.5;
-    const THRUST_4 = 6.0;
-    const THRUST_5_PLUS = 8.0;
-    const THRUST_LOAD_COST = 0.35;
-    const MIN_THRUST = 2.5;
+    const THRUST_3 = 5.25;
+    const THRUST_4 = 6.75;
+    const THRUST_5_PLUS = 8.75;
+    const THRUST_LOAD_COST = 0.30;
+    const MIN_THRUST = 3.0;
     const SYMBOLS = ["●", "▲", "■", "★"];
     const NAMES = ["丸", "三角", "四角", "星"];
 
@@ -1185,7 +1185,7 @@
       chaseSelected = null;
       selected = null;
       recommended = [];
-      setMessage("追撃 CHANCE! 黄色枠のブロックを選んでください", "combo");
+      setMessage("追撃 CHANCE! 落下前に黄色枠のブロックを選んでください", "combo");
       render();
       await playChaseIntro();
 
@@ -1509,19 +1509,26 @@
           break;
         }
 
-        await wait(220);
+        await wait(120);
+
+        // 追撃は「全部落ちた後」ではなく、発射が頂点に達して
+        // 重力落下へ入る直前に出す。追撃で揃えば、その場で次の発射へ続く。
+        if (!findMatches().size && allowChase && !chaseUsed) {
+          chaseUsed = true;
+          await beginChaseSwap();
+          if (gameOver || cleared) break;
+
+          if (findMatches().size) {
+            setMessage("空中追撃成功！ 落下前に追加発射！", "combo");
+            await wait(100);
+            continue;
+          }
+        }
 
         const fallMoves = applyGravity();
         await animateMoves(fallMoves, "fall", 980);
         await mutateReturnedBlocks();
         await wait(260);
-
-        // 自然連鎖が続く間は止めない。途切れた時だけ追撃交換を1回だけ出す。
-        if (!findMatches().size && allowChase && !chaseUsed) {
-          chaseUsed = true;
-          await beginChaseSwap();
-          if (gameOver || cleared) break;
-        }
       }
       return chain;
     }
@@ -1691,7 +1698,7 @@
     newBtn.addEventListener("click", () => showDialog("最初から遊ぶ？", "現在の盤面を終えて、新しいゲームを始めます。", "新しく始める", newGame));
     helpBtn.addEventListener("click", () => showDialog(
       "遊び方",
-      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個=推力4.5、4個=6.0、5個以上=8.0。上に乗るブロック1個ごとに実効推力が0.35下がり、最低2.5は残ります。推力は小数マスで計算し、頂点では減速してから滑らかに落下へ移ります。揃ったブロック自身も実効推力ぶんだけ上昇します。上端を越えれば消え、越えられず落ちてきた場合は着地時に元とは違う種類へランダム変化します。変化後はできるだけ3個揃いにならない種類を選びます。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>追撃交換：</strong>自然連鎖が止まった時、3個以上を作れる交換がある場合だけ発生します。候補ブロックが黄色く光り、1個選ぶと交換相手だけ白く光ります。追撃で揃えば連鎖を引き継いで追加発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
+      `上下左右に隣り合う2個を選ぶと交換します。交換は1回1手です。<br><br><strong>打ち上げ：</strong>3個=推力5.25、4個=6.75、5個以上=8.75。上に乗るブロック1個ごとに実効推力が0.30下がり、最低3.0は残ります。推力は小数マスで計算し、頂点では減速してから滑らかに落下へ移ります。揃ったブロック自身も実効推力ぶんだけ上昇します。上端を越えれば消え、越えられず落ちてきた場合は着地時に元とは違う種類へランダム変化します。変化後はできるだけ3個揃いにならない種類を選びます。<br><br><strong>BIG / CHAIN BONUS：</strong>4個以上のマッチ、または2連鎖以上で次のせり上がりが1手遅れます。<br><br><strong>オススメ：</strong>迷った時だけ押すと、良さそうな交換候補2個を同じ白枠で表示します。<br><br><strong>追撃交換：</strong>自然連鎖が止まった時、3個以上を作れる交換がある場合だけ発生します。候補ブロックが黄色く光り、1個選ぶと交換相手だけ白く光ります。追撃で揃えば連鎖を引き継いで追加発射します。<br><br>上端から${LAUNCH_GOAL}個飛ばすとクリア。揃う交換がない時は自動で1段追加します。`,
       "盤面に戻る"
     ));
 
