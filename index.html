@@ -156,6 +156,11 @@
     .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
     .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
     .cell.hint { animation: hintPulse .7s ease-in-out 3; z-index: 2; }
+    .cell.auto-match-reason {
+      z-index: 4;
+      animation: autoMatchReason .55s ease-in-out infinite alternate;
+      box-shadow: 0 0 0 4px #fff, 0 0 26px #ffd34e;
+    }
     .cell.match { animation: ignite .34s ease-in-out 2; z-index: 2; }
     .cell.launch { animation: launch .38s ease-out; z-index: 2; }
     .cell.fall { animation: fall .3s ease-out; }
@@ -184,6 +189,10 @@
     .type-3 { background: #d08b24; border: 2px dotted #fff0a5; }
 
     @keyframes hintPulse { 50% { box-shadow: 0 0 0 4px var(--accent), 0 0 22px var(--accent); transform: scale(.9); } }
+    @keyframes autoMatchReason {
+      from { transform: scale(.94); filter: brightness(1.15); }
+      to { transform: scale(1.08); filter: brightness(1.8); }
+    }
     @keyframes ignite { 50% { transform: scale(.72) rotate(8deg); filter: brightness(1.7); } }
     @keyframes launch { from { transform: translateY(38%); } to { transform: translateY(0); } }
     @keyframes fall { from { transform: translateY(-32%); } to { transform: translateY(0); } }
@@ -369,7 +378,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.3.1";
+    const APP_VERSION = "0.3.2";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -459,11 +468,17 @@
           return;
         }
 
-        // 揃ったブロックのロケット上昇は、通常速度なら
-        // 1ドット進んで少し待つ、を繰り返す。
-        // これで高リフレッシュレート環境でも速くなりすぎない。
+        // 通常速度は、交換・打ち上げ・落下・せり上がりをすべて
+        // 1ステップ = 1px に統一する。CSSの座標補間は使わない。
         const pixelsPerStep = fast ? 5 : 1;
-        const stepInterval = kind === "matchedRocket" && !fast ? 28 : 0;
+        const normalIntervals = {
+          swap: 22,
+          launch: 20,
+          matchedRocket: 30,
+          fall: 16,
+          rise: 20
+        };
+        const stepInterval = fast ? 0 : (normalIntervals[kind] ?? 18);
         let travelled = 0;
         let lastStepAt = 0;
 
@@ -493,7 +508,7 @@
           travelled = Math.min(totalPixels, travelled + pixelsPerStep);
           const t = travelled / totalPixels;
 
-          // 縦のロケット上昇は通常速度で1回につき必ず1pxだけ進む。
+          // 盤面上の移動座標は必ず整数pxに丸める。
           const x = Math.round(startX + dx * t);
           const y = Math.round(startY + dy * t);
           sprite.style.left = `${x}px`;
@@ -814,7 +829,7 @@
       await makeMove(a, { r, c });
     }
 
-    async function makeMove(a, b) {
+    async function makeMove(a, b, options = {}) {
       if (busy || gameOver || cleared) return;
       saveUndo();
       busy = true;
@@ -826,8 +841,21 @@
       ];
       swapOn(board, a, b);
       turn++;
-      setMessage("交換しました。結果を計算中…");
+      setMessage("交換しました。結果を確認します…");
       await animateMoves(swapMoves, "swap", 460);
+
+      if (options.showMatchReason) {
+        const reasonMatches = findMatches();
+        if (reasonMatches.size > 0) {
+          const classes = new Map();
+          for (const position of reasonMatches) classes.set(position, "auto-match-reason");
+          const first = [...reasonMatches][0].split(",").map(Number);
+          const value = board[first[0]][first[1]];
+          render(classes);
+          setMessage(`おまかせ：交換した結果、この${reasonMatches.size}個の ${SYMBOLS[value]} ${NAMES[value]} が揃いました`, "combo");
+          await waitExact(1300);
+        }
+      }
 
       const chain = await resolveBoard();
       if (cleared || gameOver) return;
@@ -1009,17 +1037,17 @@
       await waitExact(650);
 
       selected = move.b;
-      setMessage("おまかせ：交換先を選びます");
-      render();
-      await waitExact(650);
-
-      selected = null;
+      hinted = [move.a, move.b];
       setMessage("おまかせ：この2個を交換します");
       render();
-      await waitExact(450);
+      await waitExact(800);
+
+      selected = null;
+      render();
+      await waitExact(300);
 
       busy = false;
-      await makeMove(move.a, move.b);
+      await makeMove(move.a, move.b, { showMatchReason: true });
     }
 
     function undo() {
