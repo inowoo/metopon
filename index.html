@@ -186,7 +186,14 @@
       z-index: 6;
     }
     .motion-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
-    .motion-block { position: absolute; margin: 0; transition: none; pointer-events: none; }
+    .motion-block {
+      position: absolute;
+      margin: 0;
+      transition: none !important;
+      pointer-events: none;
+      transform: none !important;
+    }
+    .motion-block:hover { transform: none !important; filter: none; }
     .motion-block.jet::after {
       content: ""; position: absolute; top: 90%; left: 28%; width: 44%; height: 100%;
       background: linear-gradient(#fff5ab, #ffb02eaa 40%, transparent);
@@ -331,7 +338,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.6.1</span>
+          <span id="versionBadge" class="version-badge">v0.6.2</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -400,7 +407,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.6.1";
+    const APP_VERSION = "0.6.2";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -494,6 +501,9 @@
 
         let x = startX;
         let y = startY;
+
+        // 通常速度では必ず1 CSS pixelずつ。
+        // 早送り時だけ5pxずつ進める。
         const stepPixels = fast ? 5 : 1;
 
         function finish() {
@@ -521,8 +531,8 @@
             return;
           }
 
-          // 通常速度では、1回のブラウザ描画フレームにつき各軸を最大1pxだけ動かす。
-          // setTimeoutではなくrequestAnimationFrameを使い、途中の1px更新がまとめて描画されにくくする。
+          // 1フレームに1pxだけ座標を進める。
+          // 縦移動はyだけ、横移動はxだけが1pxずつ変化する。
           if (remainX !== 0) {
             x += Math.sign(remainX) * Math.min(stepPixels, Math.abs(remainX));
           }
@@ -530,8 +540,10 @@
             y += Math.sign(remainY) * Math.min(stepPixels, Math.abs(remainY));
           }
 
-          sprite.style.left = `${x}px`;
-          sprite.style.top = `${y}px`;
+          sprite.style.left = `${Math.trunc(x)}px`;
+          sprite.style.top = `${Math.trunc(y)}px`;
+
+          // 次の描画フレームまで必ず待つ。
           requestAnimationFrame(frameStep);
         }
 
@@ -557,14 +569,29 @@
       const duration = reduced ? 1 : fast ? ms / 3 : ms;
       const animations = [];
 
+      // board はすでに論理上の移動後状態になっている。
+      // そのまま表示すると「先に最終位置へワープして、その上をコピーが動く」ように見える。
+      // そこで移動に関係する元位置・先位置の実セルを一時的に隠し、
+      // 移動スプライトだけを見せる。
+      const hiddenIndexes = new Set();
+      for (const m of moves) {
+        if (m.from.r >= 0 && m.from.r < ROWS) {
+          hiddenIndexes.add(m.from.r * COLS + m.from.c);
+        }
+        if (m.to.r >= 0 && m.to.r < ROWS) {
+          hiddenIndexes.add(m.to.r * COLS + m.to.c);
+        }
+      }
+      for (const index of hiddenIndexes) {
+        const cell = cells[index];
+        if (cell) cell.style.visibility = "hidden";
+      }
+
       for (const m of moves) {
         if (m.value === null) continue;
-        if (m.to.r >= 0 && m.to.r < ROWS) {
-          cells[m.to.r * COLS + m.to.c].style.visibility = "hidden";
-        }
 
         const sprite = document.createElement("div");
-        sprite.className = `cell block type-${m.value} motion-block${kind === "launch" ? " jet" : ""}`;
+        sprite.className = `cell block type-${m.value} motion-block${kind === "launch" ? " jet" : ""}${kind === "rise" ? " rising" : ""}`;
         sprite.textContent = SYMBOLS[m.value];
 
         const fromX = first.left - origin.left + m.from.c * stepX;
@@ -1193,7 +1220,7 @@
     }
 
     async function addRow() {
-      setMessage("3手経過。下から新しい段がせり上がります", "danger");
+      setMessage("せり上がり：盤面全体と新しい段が下から1pxずつ上昇します", "danger");
       await wait(760);
       if (board[0].some(value => value !== null)) {
         endGame();
