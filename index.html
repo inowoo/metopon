@@ -260,6 +260,31 @@
     .type-2 { background: #a360d0; border: 2px double #f1c5ff; }
     .type-3 { background: #d08b24; border: 2px dotted #fff0a5; }
     @keyframes recommendPulse { 50% { box-shadow: 0 0 0 5px #08101f, 0 0 28px 9px #ffffffcc; } }
+    .chase-banner {
+      position: absolute;
+      z-index: 20;
+      left: 50%;
+      top: 44%;
+      transform: translate(-50%, -50%) scale(.8);
+      min-width: 76%;
+      padding: 12px 10px;
+      border: 3px solid white;
+      border-radius: 16px;
+      background: #08101fee;
+      color: #fff;
+      text-align: center;
+      font-size: clamp(22px, 7vw, 38px);
+      font-weight: 1000;
+      letter-spacing: .04em;
+      pointer-events: none;
+      opacity: 0;
+      text-shadow: 0 2px 0 #000;
+      box-shadow: 0 0 30px #ffd34e88;
+    }
+    .chase-banner[hidden] { display: none !important; }
+    .chase-banner.show {
+      animation: chaseBannerPop .65s ease-out forwards;
+    }
     @keyframes chaseBannerPop {
       0% { opacity: 0; transform: translate(-50%, -50%) scale(.65); }
       18% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
@@ -480,7 +505,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.25</span>
+          <span id="versionBadge" class="version-badge">v0.8.26</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -495,7 +520,7 @@
 
       <div class="board-wrap">
         <div class="danger-line" aria-hidden="true"></div>
-        <div id="chaseBanner" class="chase-banner" aria-hidden="true">追撃 CHANCE!</div>
+        <div id="chaseBanner" class="chase-banner" aria-hidden="true" hidden>追撃 CHANCE!</div>
         <div id="board" class="board" role="grid" aria-label="6列10行のゲーム盤"></div>
       </div>
 
@@ -550,7 +575,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.25";
+    const APP_VERSION = "0.8.26";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -598,6 +623,7 @@
     let chaseSelected = null;
     let chaseResolve = null;
     let chaseMoves = [];
+    let chaseFocus = new Set();
     let dragState = null;
     let suppressBoardClick = false;
     let score = 0;
@@ -1087,15 +1113,15 @@
             cell.setAttribute("aria-label", `${r + 1}行${c + 1}列 ${NAMES[displayType]}${isSpent(value) ? " 帰還中" : ""}`);
           }
           if (chaseMode) {
-            const inAnyMove = chaseMoves.some(m =>
-              (m.a.r === r && m.a.c === c) || (m.b.r === r && m.b.c === c)
+            const isStart = chaseMoves.some(m =>
+              m.a.r === r && m.a.c === c
             );
-            if (inAnyMove) cell.classList.add("chase-candidate");
+            if (isStart) cell.classList.add("chase-candidate");
 
             if (chaseSelected) {
               const isPartner = chaseMoves.some(m =>
-                ((m.a.r === chaseSelected.r && m.a.c === chaseSelected.c) && (m.b.r === r && m.b.c === c)) ||
-                ((m.b.r === chaseSelected.r && m.b.c === chaseSelected.c) && (m.a.r === r && m.a.c === c))
+                m.a.r === chaseSelected.r && m.a.c === chaseSelected.c &&
+                m.b.r === r && m.b.c === c
               );
               if (isPartner) cell.classList.add("chase-partner");
             }
@@ -1437,7 +1463,7 @@
       undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
     }
 
-    function buildLinePath(a, b) {
+    function buildLinePathOn(target, a, b) {
       if (a.r === b.r && a.c === b.c) return [];
       if (a.r !== b.r && a.c !== b.c) return null;
 
@@ -1449,11 +1475,79 @@
       while (cur.r !== b.r || cur.c !== b.c) {
         const next = { r: cur.r + dr, c: cur.c + dc };
         if (next.r < 0 || next.r >= ROWS || next.c < 0 || next.c >= COLS) return null;
-        if (board[next.r][next.c] === null) return null;
+        if (target[next.r][next.c] === null) return null;
         path.push({ from: { ...cur }, to: next });
         cur = next;
       }
       return path;
+    }
+
+    function buildLinePath(a, b) {
+      return buildLinePathOn(board, a, b);
+    }
+
+    function applyLinePath(target, path) {
+      for (const step of path) swapOn(target, step.from, step.to);
+    }
+
+    function buildChaseFocus(launchMoves) {
+      const focus = new Set();
+      const add = (r, c) => {
+        if (r >= 0 && r < ROWS && c >= 0 && c < COLS) focus.add(key(r, c));
+      };
+
+      for (const move of launchMoves) {
+        if (move.to.r < 0 || move.to.r >= ROWS) continue;
+        add(move.to.r, move.to.c);
+        add(move.to.r - 1, move.to.c);
+        add(move.to.r + 1, move.to.c);
+        add(move.to.r, move.to.c - 1);
+        add(move.to.r, move.to.c + 1);
+      }
+      return focus;
+    }
+
+    function findChaseLineMoves(focus) {
+      if (!focus || !focus.size) return [];
+
+      const moves = [];
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (board[r][c] === null) continue;
+          const a = { r, c };
+
+          for (let tc = 0; tc < COLS; tc++) {
+            if (tc === c || board[r][tc] === null) continue;
+            const b = { r, c: tc };
+            const path = buildLinePathOn(board, a, b);
+            if (!path || !path.length) continue;
+            const touched = [a, ...path.map(step => step.to)].some(p => focus.has(key(p.r, p.c)));
+            if (!touched) continue;
+
+            const trial = copyBoard();
+            applyLinePath(trial, path);
+            const matches = findMatches(trial);
+            if (![...matches].some(k => focus.has(k))) continue;
+            moves.push({ a, b, path });
+          }
+
+          for (let tr = 0; tr < ROWS; tr++) {
+            if (tr === r || board[tr][c] === null) continue;
+            const b = { r: tr, c };
+            const path = buildLinePathOn(board, a, b);
+            if (!path || !path.length) continue;
+            const touched = [a, ...path.map(step => step.to)].some(p => focus.has(key(p.r, p.c)));
+            if (!touched) continue;
+
+            const trial = copyBoard();
+            applyLinePath(trial, path);
+            const matches = findMatches(trial);
+            if (![...matches].some(k => focus.has(k))) continue;
+            moves.push({ a, b, path });
+          }
+        }
+      }
+      return moves;
     }
 
     async function makeLineMove(a, b) {
@@ -1469,6 +1563,7 @@
       chaseSelected = null;
       chaseResolve = null;
       chaseMoves = [];
+      chaseFocus = new Set();
       riseBonusGrantedThisMove = false;
       selected = null;
       recommended = [];
@@ -1518,8 +1613,9 @@
     }
 
     function beginBoardDrag(event) {
-      if (busy || gameOver || cleared || chaseMode) return;
+      if (gameOver || cleared) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
+      if (busy && !chaseMode) return;
 
       const cell = event.target.closest(".cell.block");
       if (!cell || !boardEl.contains(cell)) return;
@@ -1527,6 +1623,27 @@
       const r = Number(cell.dataset.row);
       const c = Number(cell.dataset.col);
       if (board[r][c] === null) return;
+
+      if (chaseMode) {
+        const isStart = chaseMoves.some(m => m.a.r === r && m.a.c === c);
+        if (!isStart) return;
+
+        chaseSelected = { r, c };
+        dragState = {
+          chase: true,
+          pointerId: event.pointerId,
+          start: { r, c },
+          current: { r, c },
+          startX: event.clientX,
+          startY: event.clientY,
+          axis: null,
+          moved: false
+        };
+        boardEl.setPointerCapture?.(event.pointerId);
+        setMessage("追撃ドラッグ：白枠の移動先で指を離してください");
+        render();
+        return;
+      }
 
       dragState = {
         pointerId: event.pointerId,
@@ -1564,6 +1681,21 @@
 
       const pointed = boardCellFromPoint(event.clientX, event.clientY);
       if (!pointed) return;
+
+      if (dragState.chase) {
+        const target = dragState.axis === "h"
+          ? { r: dragState.start.r, c: pointed.c }
+          : { r: pointed.r, c: dragState.start.c };
+
+        const valid = chaseMoves.find(m =>
+          m.a.r === dragState.start.r && m.a.c === dragState.start.c &&
+          m.b.r === target.r && m.b.c === target.c
+        );
+        dragState.current = target;
+        dragState.moved = Boolean(valid);
+        event.preventDefault();
+        return;
+      }
 
       const target = dragState.axis === "h"
         ? { r: dragState.start.r, c: pointed.c }
@@ -1613,6 +1745,26 @@
         }
       } catch {}
 
+      if (dragState.chase) {
+        const state = dragState;
+        dragState = null;
+        const validMove = chaseMoves.find(m =>
+          m.a.r === state.start.r && m.a.c === state.start.c &&
+          m.b.r === state.current.r && m.b.c === state.current.c
+        );
+
+        suppressBoardClick = true;
+        setTimeout(() => { suppressBoardClick = false; }, 300);
+
+        if (validMove) {
+          await executeChaseLineMove(validMove);
+        } else {
+          setMessage("追撃ドラッグは白枠の移動先で離してください");
+          render();
+        }
+        return;
+      }
+
       const moved = dragState.moved;
       dragState = null;
 
@@ -1633,6 +1785,14 @@
 
     function cancelBoardDrag(event) {
       if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+      if (dragState.chase) {
+        dragState = null;
+        chaseSelected = null;
+        setMessage("追撃ドラッグをキャンセルしました");
+        render();
+        return;
+      }
 
       if (dragState.moved) {
         board = dragState.undo.board.map(row => [...row]);
@@ -1713,22 +1873,53 @@
       render();
     }
 
+    async function executeChaseLineMove(move) {
+      if (!move || !chaseMode) return false;
+
+      chaseBannerEl.classList.remove("show");
+      chaseBannerEl.hidden = true;
+      chaseMode = false;
+      chaseSelected = null;
+      chaseMoves = [];
+      chaseFocus = new Set();
+
+      for (const step of move.path) {
+        const moves = [
+          { from: step.from, to: step.to, value: board[step.from.r][step.from.c] },
+          { from: step.to, to: step.from, value: board[step.to.r][step.to.c] }
+        ];
+        swapOn(board, step.from, step.to);
+        setMessage(move.path.length > 1 ? "追撃連続移動中…" : "追撃交換！", "combo");
+        await animateMoves(moves, "swap", 220);
+      }
+
+      setMessage("追撃成功！ 連鎖続行！", "combo");
+      const resolve = chaseResolve;
+      chaseResolve = null;
+      render();
+      if (resolve) resolve();
+      return true;
+    }
+
     async function playChaseIntro() {
       chaseBannerEl.classList.remove("show");
-      // Restart animation even on consecutive chase opportunities.
+      chaseBannerEl.hidden = false;
       void chaseBannerEl.offsetWidth;
       chaseBannerEl.classList.add("show");
       await waitExact(650);
       chaseBannerEl.classList.remove("show");
+      chaseBannerEl.hidden = true;
     }
 
     function finishChaseSwap() {
       const resolve = chaseResolve;
       chaseBannerEl.classList.remove("show");
+      chaseBannerEl.hidden = true;
       chaseMode = false;
       chaseSelected = null;
       chaseResolve = null;
       chaseMoves = [];
+      chaseFocus = new Set();
       render();
       if (resolve) resolve();
     }
@@ -1739,14 +1930,15 @@
       finishChaseSwap();
     }
 
-    async function beginChaseSwap() {
+    async function beginChaseSwap(focus) {
       if (gameOver || cleared) return;
 
-      chaseMoves = possibleMoves().filter(m =>
-        board[m.a.r][m.a.c] !== null && board[m.b.r][m.b.c] !== null
-      );
+      chaseFocus = new Set(focus || []);
+      chaseMoves = findChaseLineMoves(chaseFocus);
       if (!chaseMoves.length) {
-        setMessage("追撃できる交換がありません。この手番を終了します");
+        chaseFocus = new Set();
+        chaseBannerEl.hidden = true;
+        setMessage("直前の打ち上げに関係する追撃はありません。この手番を終了します");
         return;
       }
 
@@ -1754,7 +1946,7 @@
       chaseSelected = null;
       selected = null;
       recommended = [];
-      setMessage("追撃 CHANCE! 黄色く点滅しているブロックを選んでください", "combo");
+      setMessage("追撃 CHANCE! 黄色点滅から、白枠へタップまたはドラッグ", "combo");
       render();
       await playChaseIntro();
 
@@ -1764,67 +1956,46 @@
     }
 
     async function handleChaseClick(r, c) {
-      if (!chaseMode) return;
-      if (board[r][c] === null) return;
+      if (!chaseMode || board[r][c] === null) return;
 
       if (!chaseSelected) {
-        const isCandidate = chaseMoves.some(m =>
-          (m.a.r === r && m.a.c === c) || (m.b.r === r && m.b.c === c)
-        );
-        if (!isCandidate) {
-          setMessage("黄色く光っているブロックを選んでください");
+        const isStart = chaseMoves.some(m => m.a.r === r && m.a.c === c);
+        if (!isStart) {
+          setMessage("黄色く点滅している追撃ブロックを選んでください");
           return;
         }
 
         chaseSelected = { r, c };
-        setMessage("白く光った相手を選ぶと追撃交換します");
+        setMessage("白枠の移動先をタップするか、その方向へドラッグしてください");
         render();
         return;
       }
 
       if (chaseSelected.r === r && chaseSelected.c === c) {
         chaseSelected = null;
-        setMessage("追撃交換の選択を解除しました");
+        setMessage("追撃の選択を解除しました");
         render();
         return;
       }
 
       const validMove = chaseMoves.find(m =>
-        ((m.a.r === chaseSelected.r && m.a.c === chaseSelected.c) && (m.b.r === r && m.b.c === c)) ||
-        ((m.b.r === chaseSelected.r && m.b.c === chaseSelected.c) && (m.a.r === r && m.a.c === c))
+        m.a.r === chaseSelected.r && m.a.c === chaseSelected.c &&
+        m.b.r === r && m.b.c === c
       );
 
-      if (!validMove) {
-        const isCandidate = chaseMoves.some(m =>
-          (m.a.r === r && m.a.c === c) || (m.b.r === r && m.b.c === c)
-        );
-        if (isCandidate) {
-          chaseSelected = { r, c };
-          setMessage("選び直しました。白く光った相手を選んでください");
-          render();
-        } else {
-          setMessage("追撃できる組み合わせを選んでください");
-        }
+      if (validMove) {
+        await executeChaseLineMove(validMove);
         return;
       }
 
-      const a = { ...chaseSelected };
-      const b = { r, c };
-      const moves = [
-        { from: a, to: b, value: board[a.r][a.c] },
-        { from: b, to: a, value: board[b.r][b.c] }
-      ];
-
-      swapOn(board, a, b);
-      chaseMode = false;
-      chaseSelected = null;
-      chaseMoves = [];
-      setMessage("追撃成功！ 連鎖続行！", "combo");
-      await animateMoves(moves, "swap", 460);
-
-      const resolve = chaseResolve;
-      chaseResolve = null;
-      if (resolve) resolve();
+      const isStart = chaseMoves.some(m => m.a.r === r && m.a.c === c);
+      if (isStart) {
+        chaseSelected = { r, c };
+        setMessage("追撃の移動元を選び直しました。白枠へ移動してください");
+        render();
+      } else {
+        setMessage("白枠で表示された、打ち上げに関係する移動先を選んでください");
+      }
     }
 
     function describeReadyBoard() {
@@ -2054,6 +2225,7 @@
 
         setMessage(`推力 / 重量 → 実効：${thrustNotes.join("  ")}`, "combo");
         await animateMoves(launchMoves, "launch", 1450);
+        const currentChaseFocus = buildChaseFocus(launchMoves);
 
         const bigMatch = lines.some(line => line.length >= 4);
         const gained = (matches.size * 15 + launchedOut * 45 + (bigMatch ? 160 : 0) + (crossMatch ? 180 : 0)) * chain;
@@ -2096,7 +2268,7 @@
         // 重力落下へ入る直前に出す。追撃で揃えば、その場で次の発射へ続く。
         if (!findMatches().size && allowChase && !chaseUsed) {
           chaseUsed = true;
-          await beginChaseSwap();
+          await beginChaseSwap(currentChaseFocus);
           if (gameOver || cleared) break;
 
           if (findMatches().size) {
@@ -2172,6 +2344,7 @@
       chaseSelected = null;
       chaseResolve = null;
       chaseMoves = [];
+      chaseFocus = new Set();
       undoState = null;
       selected = null;
       recommended = [];
