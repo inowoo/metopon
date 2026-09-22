@@ -131,7 +131,7 @@
       grid-template-rows: repeat(10, minmax(0, 1fr));
       gap: var(--cell-gap);
       aspect-ratio: 6 / 10;
-      touch-action: manipulation;
+      touch-action: none;
     }
 
     .cell {
@@ -172,6 +172,13 @@
       z-index: 9;
     }
     .cell.block:hover { filter: brightness(1.12); transform: translateY(-1px); }
+    .cell.dragging {
+      z-index: 10;
+      outline: 4px solid #fff;
+      outline-offset: -2px;
+      box-shadow: 0 0 22px #ffd34eaa;
+      transform: scale(.94);
+    }
     .cell.selected { box-shadow: 0 0 0 4px white, 0 0 18px white; z-index: 2; transform: scale(.91); }
     .cell.chase-candidate {
       outline: 4px solid #ffd34e;
@@ -378,14 +385,88 @@
     .dialog .control { width: 100%; font-size: 17px; }
 
     @media (max-width: 690px) {
-      body { padding-left: 8px; padding-right: 8px; }
-      .app { grid-template-columns: 1fr; max-width: 430px; }
+      html, body {
+        height: 100dvh;
+        min-height: 100dvh;
+        overflow: hidden;
+      }
+      body {
+        padding: max(2px, env(safe-area-inset-top)) 4px max(2px, env(safe-area-inset-bottom));
+      }
+      .app {
+        grid-template-columns: 1fr;
+        max-width: 430px;
+        height: 100%;
+        min-height: 0;
+      }
       .side-panel { display: none; }
-      .game-panel { padding: 8px; }
+      .game-panel {
+        padding: 5px 6px;
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
+      }
+      header { margin-bottom: 3px; }
+      h1 { font-size: 21px; }
+      .version-badge { font-size: 9px; padding: 1px 5px; }
       .tagline { display: none; }
-      .controls { grid-template-columns: repeat(3, 1fr); }
-      .control { font-size: 13px; }
-      :root { --board-max-width: min(100%, 350px, calc(60svh - 120px)); }
+
+      .status {
+        gap: 3px;
+        margin-bottom: 3px;
+      }
+      .status-item {
+        padding: 2px 2px;
+        border-radius: 8px;
+      }
+      .status-label { font-size: 8px; }
+      .status-value { font-size: 13px; }
+
+      :root {
+        --cell-gap: 3px;
+        --board-max-width: min(100%, 330px, calc(60dvh - 170px));
+      }
+      .board-wrap {
+        padding: 5px;
+        border-radius: 12px;
+      }
+      .danger-line {
+        top: calc(5px + (100% - 10px) / 10);
+      }
+      .cell { font-size: clamp(15px, 5.4vw, 28px); }
+
+      .message {
+        min-height: 30px;
+        height: 30px;
+        margin-top: 3px;
+        padding: 3px 7px;
+        font-size: 12px;
+      }
+
+      .stage-rules {
+        margin-top: 3px;
+        padding: 3px 5px;
+        font-size: 9px;
+        line-height: 1.18;
+        border-radius: 8px;
+      }
+
+      .controls {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 3px;
+        margin-top: 3px;
+      }
+      .control {
+        min-height: 31px;
+        padding: 4px 2px;
+        border-radius: 8px;
+        font-size: 11px;
+      }
+    }
+
+    @media (max-width: 690px) and (max-height: 700px) {
+      .stage-rules { display: none; }
+      :root { --board-max-width: min(100%, 320px, calc(60dvh - 130px)); }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -399,7 +480,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.23</span>
+          <span id="versionBadge" class="version-badge">v0.8.24</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -418,7 +499,7 @@
         <div id="board" class="board" role="grid" aria-label="6列10行のゲーム盤"></div>
       </div>
 
-      <div id="message" class="message" aria-live="polite">上下左右に隣り合うブロックを選んでください</div>
+      <div id="message" class="message" aria-live="polite">ブロックをドラッグして移動してください</div>
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
         <br><span class="clear-rule">3個=5.25 / 4個=6.75 / 5個以上=8.75（上1個ごとに-0.30）</span><br>
@@ -440,7 +521,7 @@
     <aside class="side-panel">
       <h2>遊び方</h2>
       <ol class="howto">
-        <li><strong>上下左右に隣り合う2個</strong>を選んで交換</li>
+        <li><strong>ブロックをドラッグ</strong>。連続してブロックがある範囲なら1回で複数マス移動</li>
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
         <li><strong>揃う数が多いほど推力UP</strong>。直接くっついている上のブロック1個ごとに推力を0.30消費</li>
@@ -461,7 +542,7 @@
   <div id="overlay" class="overlay">
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
       <h2 id="dialogTitle">METOPON</h2>
-      <p id="dialogText">上下左右の隣り合うブロックを入れ替え、3個そろえましょう。<br>揃った瞬間に自動で発射し、落下と連鎖まで進みます。</p>
+      <p id="dialogText">ブロックをドラッグして動かし、3個そろえましょう。<br>連続したブロックの範囲なら1回のドラッグで複数マス移動できます。</p>
       <button id="dialogBtn" class="control primary" type="button">ゲームを始める</button>
     </div>
   </div>
@@ -469,7 +550,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.23";
+    const APP_VERSION = "0.8.24";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -517,6 +598,8 @@
     let chaseSelected = null;
     let chaseResolve = null;
     let chaseMoves = [];
+    let dragState = null;
+    let suppressBoardClick = false;
     let score = 0;
     let best = Number(localStorage.getItem("metopon-best") || 0);
     let turn = 0;
@@ -1020,6 +1103,10 @@
             if (chaseSelected && chaseSelected.r === r && chaseSelected.c === c) cell.classList.add("chase-selected");
           }
           if (!chaseMode && selected && selected.r === r && selected.c === c) cell.classList.add("selected");
+          if (dragState && dragState.moved &&
+              dragState.current.r === r && dragState.current.c === c) {
+            cell.classList.add("dragging");
+          }
           const recommendIndex = recommended.findIndex(p => p.r === r && p.c === c);
           if (recommendIndex >= 0) {
             cell.classList.add("recommend");
@@ -1350,7 +1437,174 @@
       undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
     }
 
+    function boardCellFromPoint(clientX, clientY) {
+      const cells = [...boardEl.children].filter(el => el.classList.contains("cell"));
+      if (cells.length < ROWS * COLS) return null;
+
+      const first = cells[0].getBoundingClientRect();
+      const nextCol = cells[1].getBoundingClientRect();
+      const nextRow = cells[COLS].getBoundingClientRect();
+      const stepX = nextCol.left - first.left;
+      const stepY = nextRow.top - first.top;
+      if (stepX <= 0 || stepY <= 0) return null;
+
+      const centerX = first.left + first.width / 2;
+      const centerY = first.top + first.height / 2;
+      const c = Math.max(0, Math.min(COLS - 1, Math.round((clientX - centerX) / stepX)));
+      const r = Math.max(0, Math.min(ROWS - 1, Math.round((clientY - centerY) / stepY)));
+      return { r, c };
+    }
+
+    function cloneUndoState(state) {
+      if (!state) return null;
+      return {
+        ...state,
+        board: state.board.map(row => [...row])
+      };
+    }
+
+    function beginBoardDrag(event) {
+      if (busy || gameOver || cleared || chaseMode) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+
+      const cell = event.target.closest(".cell.block");
+      if (!cell || !boardEl.contains(cell)) return;
+
+      const r = Number(cell.dataset.row);
+      const c = Number(cell.dataset.col);
+      if (board[r][c] === null) return;
+
+      dragState = {
+        pointerId: event.pointerId,
+        start: { r, c },
+        current: { r, c },
+        startX: event.clientX,
+        startY: event.clientY,
+        axis: null,
+        moved: false,
+        undo: {
+          board: copyBoard(),
+          score,
+          turn,
+          launchedTotal,
+          nextRiseTurn
+        },
+        previousUndo: cloneUndoState(undoState)
+      };
+
+      boardEl.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    }
+
+    function moveBoardDrag(event) {
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+      const dx = event.clientX - dragState.startX;
+      const dy = event.clientY - dragState.startY;
+
+      if (!dragState.axis) {
+        if (Math.hypot(dx, dy) < 10) return;
+        dragState.axis = Math.abs(dx) >= Math.abs(dy) ? "h" : "v";
+      }
+
+      const pointed = boardCellFromPoint(event.clientX, event.clientY);
+      if (!pointed) return;
+
+      const target = dragState.axis === "h"
+        ? { r: dragState.start.r, c: pointed.c }
+        : { r: pointed.r, c: dragState.start.c };
+
+      let changed = false;
+      while (dragState.current.r !== target.r || dragState.current.c !== target.c) {
+        const dr = Math.sign(target.r - dragState.current.r);
+        const dc = Math.sign(target.c - dragState.current.c);
+        const next = {
+          r: dragState.current.r + dr,
+          c: dragState.current.c + dc
+        };
+
+        if (next.r < 0 || next.r >= ROWS || next.c < 0 || next.c >= COLS) break;
+        // 空白は越えない。「ブロックが連続している範囲」だけ一筆で移動できる。
+        if (board[next.r][next.c] === null) break;
+
+        if (!dragState.moved) {
+          undoState = dragState.undo;
+          busy = true;
+          riseBonusGrantedThisMove = false;
+          selected = null;
+          recommended = [];
+        }
+
+        swapOn(board, dragState.current, next);
+        dragState.current = next;
+        dragState.moved = true;
+        changed = true;
+      }
+
+      if (changed) {
+        selected = { ...dragState.current };
+        setMessage("ドラッグ中… 指を離すと1手として確定します");
+        render();
+      }
+      event.preventDefault();
+    }
+
+    async function endBoardDrag(event) {
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+      try {
+        if (boardEl.hasPointerCapture?.(event.pointerId)) {
+          boardEl.releasePointerCapture(event.pointerId);
+        }
+      } catch {}
+
+      const moved = dragState.moved;
+      dragState = null;
+
+      if (!moved) return;
+
+      suppressBoardClick = true;
+      selected = null;
+      recommended = [];
+      render();
+
+      if (findMatches().size) {
+        await resolveBoard(true);
+        if (cleared || gameOver) return;
+      }
+      await finishTurn();
+    }
+
+    function cancelBoardDrag(event) {
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+      if (dragState.moved) {
+        board = dragState.undo.board.map(row => [...row]);
+        score = dragState.undo.score;
+        turn = dragState.undo.turn;
+        launchedTotal = dragState.undo.launchedTotal;
+        nextRiseTurn = dragState.undo.nextRiseTurn;
+        undoState = dragState.previousUndo;
+        busy = false;
+      }
+
+      dragState = null;
+      selected = null;
+      recommended = [];
+      setMessage("ドラッグをキャンセルしました");
+      render();
+    }
+
+    boardEl.addEventListener("pointerdown", beginBoardDrag);
+    boardEl.addEventListener("pointermove", moveBoardDrag);
+    boardEl.addEventListener("pointerup", endBoardDrag);
+    boardEl.addEventListener("pointercancel", cancelBoardDrag);
+
     async function onCellClick(event) {
+      if (suppressBoardClick) {
+        suppressBoardClick = false;
+        return;
+      }
       const r = Number(event.currentTarget.dataset.row);
       const c = Number(event.currentTarget.dataset.col);
       if (gameOver || cleared) return;
@@ -1493,7 +1747,7 @@
     }
 
     function describeReadyBoard() {
-      setMessage("上下左右の隣同士を2個選んで交換。3個以上揃うと自動で発射します");
+      setMessage("ブロックをドラッグ。連続しているブロック上なら1回で複数マス移動できます");
     }
 
     async function replenishUntilPlayable() {
@@ -1956,7 +2210,7 @@
       showDialog(`つづきから v${APP_VERSION}`, "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ", resumePlayableBoard);
     } else {
       newGame();
-      showDialog(`METOPON v${APP_VERSION}`, "上下左右の隣り合うブロックを交換して3個以上そろえます。<br>揃う数と上に乗る重さで上昇量が変わります。自然連鎖が途切れた時は、揃えられる追撃候補だけが光ります。", "ゲームを始める");
+      showDialog(`METOPON v${APP_VERSION}`, "ブロックをドラッグして3個以上そろえます。連続したブロック上なら1回で複数マス動かせます。<br>揃う数と上に乗る重さで上昇量が変わります。自然連鎖が途切れた時は、揃えられる追撃候補だけが光ります。", "ゲームを始める");
     }
   </script>
 </body>
