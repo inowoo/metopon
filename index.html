@@ -301,6 +301,9 @@
     .stage-rules .clear-rule { color: #ffe27d; }
     .stage-rules .over-rule { color: #ffadb5; }
 
+    .motion-block.rigid-horizontal {
+      box-shadow: 0 0 14px #fff8, 0 0 24px #ffd34e55;
+    }
     .motion-block.matched-rocket {
       z-index: 7;
       filter: brightness(1.25);
@@ -386,7 +389,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.21</span>
+          <span id="versionBadge" class="version-badge">v0.8.22</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -435,7 +438,7 @@
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
       </ol>
-      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。横に3個以上揃った場合は、その横につながった列を1つの固まりとして同じ距離だけ打ち上げます。各列で一緒に上がるのはマッチへ直接つながっている上の塊だけで、空白を挟んだブロックは動きません。上端を越えなかったマッチブロックは落下後に別種類へ変化して盤面に残ります。追撃では、重力落下する前の盤面で揃えられる交換だけが光ります。</p>
+      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。横に3個以上揃った場合は、その横につながった列を1つの固まりとして、加速・減速・頂点・戻りまで完全に同じタイミングで打ち上げます。各列で一緒に上がるのはマッチへ直接つながっている上の塊だけで、空白を挟んだブロックは動きません。上端を越えなかったマッチブロックは落下後に別種類へ変化して盤面に残ります。追撃では、重力落下する前の盤面で揃えられる交換だけが光ります。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -456,7 +459,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.21";
+    const APP_VERSION = "0.8.22";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -734,6 +737,93 @@
       });
     }
 
+    function animateRigidLaunchGroup(items) {
+      return new Promise(resolve => {
+        if (!items.length) {
+          resolve();
+          return;
+        }
+
+        const setAll = (phase, progress) => {
+          for (const item of items) {
+            const sx = phase === "rise" ? item.fromX : item.toX;
+            const sy = phase === "rise" ? item.fromY : item.toY;
+            const ex = phase === "rise" ? item.toX : item.settleX;
+            const ey = phase === "rise" ? item.toY : item.settleY;
+            const x = sx + (ex - sx) * progress;
+            const y = sy + (ey - sy) * progress;
+            item.sprite.style.left = `${x.toFixed(2)}px`;
+            item.sprite.style.top = `${y.toFixed(2)}px`;
+          }
+        };
+
+        const first = items[0];
+        const riseDistance = Math.max(
+          Math.abs(first.toX - first.fromX),
+          Math.abs(first.toY - first.fromY)
+        );
+        const riseSpeed = fast ? 900 : 330;
+        const riseMs = Math.max(fast ? 90 : 210, riseDistance / riseSpeed * 1000);
+        const startTime = performance.now();
+
+        function riseStep(now) {
+          const raw = Math.min(1, (now - startTime) / riseMs);
+          const p = 1 - Math.pow(1 - raw, 3);
+          setAll("rise", p);
+
+          if (raw < 1) {
+            requestAnimationFrame(riseStep);
+            return;
+          }
+
+          const settling = items.some(item =>
+            item.settleX !== null &&
+            item.settleY !== null &&
+            Math.max(Math.abs(item.settleX - item.toX), Math.abs(item.settleY - item.toY)) > 0.25
+          );
+
+          if (!settling) {
+            resolve();
+            return;
+          }
+
+          const settleStart = performance.now();
+          let maxSettleDistance = 0;
+          for (const item of items) {
+            if (item.settleX === null || item.settleY === null) continue;
+            maxSettleDistance = Math.max(
+              maxSettleDistance,
+              Math.abs(item.settleX - item.toX),
+              Math.abs(item.settleY - item.toY)
+            );
+          }
+          const settleMs = Math.max(
+            fast ? 55 : 120,
+            maxSettleDistance / (fast ? 1000 : 420) * 1000
+          );
+
+          function settleStep(now2) {
+            const raw2 = Math.min(1, (now2 - settleStart) / settleMs);
+            const p2 = raw2 * raw2;
+            setAll("settle", p2);
+            if (raw2 < 1) {
+              requestAnimationFrame(settleStep);
+              return;
+            }
+            resolve();
+          }
+
+          requestAnimationFrame(settleStep);
+        }
+
+        for (const item of items) {
+          item.sprite.style.left = `${item.fromX.toFixed(2)}px`;
+          item.sprite.style.top = `${item.fromY.toFixed(2)}px`;
+        }
+        requestAnimationFrame(riseStep);
+      });
+    }
+
     async function animateMoves(moves, kind, ms) {
       render();
       if (!moves.length) return;
@@ -752,6 +842,7 @@
       // ユーザー操作に直結するゲーム状態変化を整数座標で見せる。
       const duration = fast ? ms / 3 : ms;
       const animations = [];
+      const rigidLaunchGroups = new Map();
 
       // board はすでに論理上の移動後状態になっている。
       // そのまま表示すると「先に最終位置へワープして、その上をコピーが動く」ように見える。
@@ -776,7 +867,7 @@
 
         const sprite = document.createElement("div");
         const spriteType = baseType(m.value);
-        sprite.className = `cell block type-${spriteType} motion-block${kind === "launch" && m.matched ? " jet matched-rocket" : ""}${kind === "rise" ? " rising" : ""}`;
+        sprite.className = `cell block type-${spriteType} motion-block${kind === "launch" && m.matched ? " jet matched-rocket" : ""}${kind === "launch" && m.rigidGroup ? " rigid-horizontal" : ""}${kind === "rise" ? " rising" : ""}`;
         sprite.textContent = SYMBOLS[spriteType];
 
         const visualTo = m.visualTo || m.to;
@@ -802,11 +893,22 @@
           settleY = first.top - origin.top + m.to.r * stepY;
         }
 
-        const motion = animateSpriteByPixels(
-          sprite, fromX, fromY, toX, toY, duration, kind,
-          settleX, settleY
-        );
-        animations.push(motion);
+        if (kind === "launch" && m.rigidGroup) {
+          if (!rigidLaunchGroups.has(m.rigidGroup)) rigidLaunchGroups.set(m.rigidGroup, []);
+          rigidLaunchGroups.get(m.rigidGroup).push({
+            sprite, fromX, fromY, toX, toY, settleX, settleY
+          });
+        } else {
+          const motion = animateSpriteByPixels(
+            sprite, fromX, fromY, toX, toY, duration, kind,
+            settleX, settleY
+          );
+          animations.push(motion);
+        }
+      }
+
+      for (const items of rigidLaunchGroups.values()) {
+        animations.push(animateRigidLaunchGroup(items));
       }
 
       try {
@@ -1517,7 +1619,10 @@
         const thrustNotes = [];
 
         const launchGroups = buildLaunchGroups(columns, lines);
+        let launchGroupIndex = 0;
         for (const groupCols of launchGroups) {
+          const rigidGroup = groupCols.length >= 2 ? `horizontal-${chain}-${launchGroupIndex}` : null;
+          launchGroupIndex++;
           const group = launchGroupPhysics(board, columns, groupCols);
           const thrust = group.thrust;
           const groupLabel = groupCols.length >= 2
@@ -1543,7 +1648,8 @@
                   from: { r, c },
                   to: { r: apexRow, c },
                   value,
-                  matched: false
+                  matched: false,
+                  rigidGroup
                 });
                 launchedOut++;
               } else {
@@ -1553,7 +1659,8 @@
                   to: { r: landingRow, c },
                   visualTo: { r: apexRow, c },
                   value,
-                  matched: false
+                  matched: false,
+                  rigidGroup
                 });
                 placements.push({ r: landingRow, c, value });
               }
@@ -1571,7 +1678,8 @@
                   from: { r, c },
                   to: { r: apexRow, c },
                   value,
-                  matched: true
+                  matched: true,
+                  rigidGroup
                 });
                 launchedOut++;
               } else {
@@ -1581,7 +1689,8 @@
                   to: { r: landingRow, c },
                   visualTo: { r: apexRow, c },
                   value,
-                  matched: true
+                  matched: true,
+                  rigidGroup
                 });
                 placements.push({ r: landingRow, c, value: spendBlock(value) });
               }
