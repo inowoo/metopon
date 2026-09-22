@@ -480,7 +480,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.24</span>
+          <span id="versionBadge" class="version-badge">v0.8.25</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -499,7 +499,7 @@
         <div id="board" class="board" role="grid" aria-label="6列10行のゲーム盤"></div>
       </div>
 
-      <div id="message" class="message" aria-live="polite">ブロックをドラッグして移動してください</div>
+      <div id="message" class="message" aria-live="polite">ドラッグ、または2回タップでブロックを移動</div>
       <div class="stage-rules" aria-label="ステージルール">
         <span class="clear-rule"><strong>CLEAR</strong>：上端から30個打ち上げる</span>
         <br><span class="clear-rule">3個=5.25 / 4個=6.75 / 5個以上=8.75（上1個ごとに-0.30）</span><br>
@@ -521,7 +521,7 @@
     <aside class="side-panel">
       <h2>遊び方</h2>
       <ol class="howto">
-        <li><strong>ブロックをドラッグ</strong>。連続してブロックがある範囲なら1回で複数マス移動</li>
+        <li><strong>ドラッグまたは2回タップ</strong>。連続してブロックがある範囲なら1回で複数マス移動</li>
         <li>同じ記号を縦か横に<strong>3個以上</strong>そろえる</li>
         <li>揃ったら<strong>その場で自動点火・自動発射</strong></li>
         <li><strong>揃う数が多いほど推力UP</strong>。直接くっついている上のブロック1個ごとに推力を0.30消費</li>
@@ -542,7 +542,7 @@
   <div id="overlay" class="overlay">
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">
       <h2 id="dialogTitle">METOPON</h2>
-      <p id="dialogText">ブロックをドラッグして動かし、3個そろえましょう。<br>連続したブロックの範囲なら1回のドラッグで複数マス移動できます。</p>
+      <p id="dialogText">ドラッグ、または移動元→移動先の2回タップでブロックを動かします。<br>連続したブロックの範囲なら複数マス先まで1手で移動できます。</p>
       <button id="dialogBtn" class="control primary" type="button">ゲームを始める</button>
     </div>
   </div>
@@ -550,7 +550,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.24";
+    const APP_VERSION = "0.8.25";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -1437,6 +1437,60 @@
       undoState = { board: copyBoard(), score, turn, launchedTotal, nextRiseTurn };
     }
 
+    function buildLinePath(a, b) {
+      if (a.r === b.r && a.c === b.c) return [];
+      if (a.r !== b.r && a.c !== b.c) return null;
+
+      const dr = Math.sign(b.r - a.r);
+      const dc = Math.sign(b.c - a.c);
+      const path = [];
+      let cur = { ...a };
+
+      while (cur.r !== b.r || cur.c !== b.c) {
+        const next = { r: cur.r + dr, c: cur.c + dc };
+        if (next.r < 0 || next.r >= ROWS || next.c < 0 || next.c >= COLS) return null;
+        if (board[next.r][next.c] === null) return null;
+        path.push({ from: { ...cur }, to: next });
+        cur = next;
+      }
+      return path;
+    }
+
+    async function makeLineMove(a, b) {
+      if (busy || gameOver || cleared) return false;
+      if (board[a.r][a.c] === null || board[b.r][b.c] === null) return false;
+
+      const path = buildLinePath(a, b);
+      if (!path || !path.length) return false;
+
+      saveUndo();
+      busy = true;
+      chaseMode = false;
+      chaseSelected = null;
+      chaseResolve = null;
+      chaseMoves = [];
+      riseBonusGrantedThisMove = false;
+      selected = null;
+      recommended = [];
+
+      for (const step of path) {
+        const moves = [
+          { from: step.from, to: step.to, value: board[step.from.r][step.from.c] },
+          { from: step.to, to: step.from, value: board[step.to.r][step.to.c] }
+        ];
+        swapOn(board, step.from, step.to);
+        setMessage(path.length > 1 ? "連続移動中…" : "交換中…");
+        await animateMoves(moves, "swap", 250);
+      }
+
+      if (findMatches().size) {
+        await resolveBoard(true);
+        if (cleared || gameOver) return true;
+      }
+      await finishTurn();
+      return true;
+    }
+
     function boardCellFromPoint(clientX, clientY) {
       const cells = [...boardEl.children].filter(el => el.classList.contains("cell"));
       if (cells.length < ROWS * COLS) return null;
@@ -1493,7 +1547,8 @@
       };
 
       boardEl.setPointerCapture?.(event.pointerId);
-      event.preventDefault();
+      // ここではpreventDefaultしない。短いタップは通常のclickとして通す。
+      // 実際にドラッグ判定を超えたpointermove時だけブラウザ操作を止める。
     }
 
     function moveBoardDrag(event) {
@@ -1606,29 +1661,54 @@
         suppressBoardClick = false;
         return;
       }
+
       const r = Number(event.currentTarget.dataset.row);
       const c = Number(event.currentTarget.dataset.col);
       if (gameOver || cleared) return;
+
       if (chaseMode) {
         await handleChaseClick(r, c);
         return;
       }
       if (busy) return;
+
       if (!recommended.some(p => p.r === r && p.c === c)) recommended = [];
+
       if (!selected) {
+        if (board[r][c] === null) {
+          setMessage("ブロックをタップしてください");
+          return;
+        }
         selected = { r, c };
-        setMessage("上下左右の隣のマスを選ぶと交換します");
-      } else if (selected.r === r && selected.c === c) {
+        setMessage("移動先をタップ。連続したブロック上なら複数マス先まで移動できます");
+        render();
+        return;
+      }
+
+      if (selected.r === r && selected.c === c) {
         selected = null;
         setMessage("選択を解除しました");
-      } else if (Math.abs(selected.r - r) + Math.abs(selected.c - c) === 1) {
-        const a = selected;
-        selected = null;
-        await makeMove(a, { r, c });
+        render();
         return;
-      } else {
+      }
+
+      const destination = { r, c };
+      const path = buildLinePath(selected, destination);
+
+      if (path && path.length) {
+        const start = { ...selected };
+        selected = null;
+        await makeLineMove(start, destination);
+        return;
+      }
+
+      // 行・列が違う、または途中に空白がある場合は、
+      // タップしたブロックを次の移動元として選び直す。
+      if (board[r][c] !== null) {
         selected = { r, c };
-        setMessage("交換するブロックを選び直しました");
+        setMessage("移動元を選び直しました。移動先をタップしてください");
+      } else {
+        setMessage("空白は越えられません。別の移動先を選んでください");
       }
       render();
     }
@@ -1748,7 +1828,7 @@
     }
 
     function describeReadyBoard() {
-      setMessage("ブロックをドラッグ。連続しているブロック上なら1回で複数マス移動できます");
+      setMessage("ドラッグ、または2回タップ。連続したブロック上なら複数マス移動できます");
     }
 
     async function replenishUntilPlayable() {
@@ -2211,7 +2291,7 @@
       showDialog(`つづきから v${APP_VERSION}`, "前回の盤面を読み込みました。<br>考えている間は何も進まないので、ゆっくりどうぞ。", "続きを遊ぶ", resumePlayableBoard);
     } else {
       newGame();
-      showDialog(`METOPON v${APP_VERSION}`, "ブロックをドラッグして3個以上そろえます。連続したブロック上なら1回で複数マス動かせます。<br>揃う数と上に乗る重さで上昇量が変わります。自然連鎖が途切れた時は、揃えられる追撃候補だけが光ります。", "ゲームを始める");
+      showDialog(`METOPON v${APP_VERSION}`, "ドラッグ、または移動元→移動先の2回タップで3個以上そろえます。連続したブロック上なら複数マス動かせます。<br>揃う数と上に乗る重さで上昇量が変わります。自然連鎖が途切れた時は、揃えられる追撃候補だけが光ります。", "ゲームを始める");
     }
   </script>
 </body>
