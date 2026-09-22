@@ -152,6 +152,16 @@
       transition: transform .16s ease, filter .16s ease, opacity .16s ease, box-shadow .16s ease;
     }
 
+    .board,
+    .board * {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-user-drag: none;
+    }
+    .board {
+      touch-action: manipulation;
+    }
     .cell.block { cursor: pointer; text-shadow: 0 2px 2px #0005; }
     .cell.spent {
       box-shadow: inset 0 0 0 2px #fff2a899, 0 0 14px #ff9d3d66;
@@ -389,7 +399,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.22</span>
+          <span id="versionBadge" class="version-badge">v0.8.23</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -459,7 +469,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.22";
+    const APP_VERSION = "0.8.23";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -493,6 +503,12 @@
     const dialogTitle = document.getElementById("dialogTitle");
     const dialogText = document.getElementById("dialogText");
     const dialogBtn = document.getElementById("dialogBtn");
+
+    // iPhone Safari/Chromeの長押し・ドラッグで文字選択や
+    // 「コピー / Googleで検索」メニューが出るのをゲーム盤内だけ防ぐ。
+    for (const eventName of ["selectstart", "dragstart", "contextmenu"]) {
+      boardEl.addEventListener(eventName, event => event.preventDefault());
+    }
 
     let board = emptyBoard();
     let selected = null;
@@ -974,6 +990,7 @@
           const cell = document.createElement("button");
           cell.type = "button";
           cell.className = "cell";
+          cell.draggable = false;
           cell.dataset.row = r;
           cell.dataset.col = c;
           cell.setAttribute("role", "gridcell");
