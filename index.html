@@ -1564,6 +1564,7 @@
       if (!moved) return;
 
       suppressBoardClick = true;
+      setTimeout(() => { suppressBoardClick = false; }, 300);
       selected = null;
       recommended = [];
       render();
