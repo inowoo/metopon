@@ -386,7 +386,7 @@
       <header>
         <div class="brand">
           <h1>METO<span>PON</span></h1>
-          <span id="versionBadge" class="version-badge">v0.8.20</span>
+          <span id="versionBadge" class="version-badge">v0.8.21</span>
         </div>
         <div class="tagline">一手を選んで、あとは見守る。</div>
       </header>
@@ -435,7 +435,7 @@
         <li>残ったブロックは自動で落下し、次のマッチは<strong>自動連鎖</strong></li>
         <li>基本<strong>3手ごと</strong>に下から1段追加（4個以上・連鎖で延期）</li>
       </ol>
-      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。発射時に一緒に上がるのはマッチへ直接つながっている上の塊だけで、空白を挟んだブロックは動きません。上端を越えなかったマッチブロックは落下後に別種類へ変化して盤面に残ります。追撃では、重力落下する前の盤面で揃えられる交換だけが光ります。</p>
+      <p class="rule-note">3個より4個・5個の方が強く打ち上がります。横に3個以上揃った場合は、その横につながった列を1つの固まりとして同じ距離だけ打ち上げます。各列で一緒に上がるのはマッチへ直接つながっている上の塊だけで、空白を挟んだブロックは動きません。上端を越えなかったマッチブロックは落下後に別種類へ変化して盤面に残ります。追撃では、重力落下する前の盤面で揃えられる交換だけが光ります。</p>
       <div class="legend" aria-label="ブロックの種類">
         <div class="legend-item"><div class="legend-icon type-0">●</div>丸</div>
         <div class="legend-item"><div class="legend-icon type-1">▲</div>三角</div>
@@ -456,7 +456,7 @@
   <script>
     "use strict";
 
-    const APP_VERSION = "0.8.20";
+    const APP_VERSION = "0.8.21";
     const ROWS = 10;
     const COLS = 6;
     const TYPES = 4;
@@ -1052,6 +1052,72 @@
 
       return { attachedTop, load, thrust, blockerRow };
     }
+    function buildLaunchGroups(columns, lines) {
+      const parent = new Map();
+      for (const c of columns.keys()) parent.set(c, c);
+
+      const find = c => {
+        let p = parent.get(c);
+        while (p !== parent.get(p)) p = parent.get(p);
+        let x = c;
+        while (parent.get(x) !== p) {
+          const next = parent.get(x);
+          parent.set(x, p);
+          x = next;
+        }
+        return p;
+      };
+
+      const unite = (a, b) => {
+        const ra = find(a);
+        const rb = find(b);
+        if (ra !== rb) parent.set(rb, ra);
+      };
+
+      // 横マッチでつながっている列は同じ剛体グループにする。
+      for (const line of lines) {
+        if (line.orientation !== "h") continue;
+        const cols = [...new Set(line.cells.map(p => p.c))];
+        for (let i = 1; i < cols.length; i++) unite(cols[0], cols[i]);
+      }
+
+      const grouped = new Map();
+      for (const c of columns.keys()) {
+        const root = find(c);
+        if (!grouped.has(root)) grouped.set(root, []);
+        grouped.get(root).push(c);
+      }
+      return [...grouped.values()];
+    }
+
+    function launchGroupPhysics(target, columns, groupCols) {
+      const perColumn = new Map();
+      let totalLoad = 0;
+      let baseThrust = 0;
+
+      for (const c of groupCols) {
+        const info = columns.get(c);
+        const colPhysics = launchColumnPhysics(target, c, info.topMatch, info.baseThrust);
+        perColumn.set(c, colPhysics);
+        totalLoad += colPhysics.load;
+        baseThrust = Math.max(baseThrust, info.baseThrust);
+      }
+
+      // 横に広い塊は複数列で推力を出すので、重量は1列あたりの平均で効かせる。
+      const averageLoad = totalLoad / Math.max(1, groupCols.length);
+      let thrust = effectiveThrust(baseThrust, averageLoad);
+
+      // 剛体なので、どこか1列が上の離れた塊へ接触したら全体が止まる。
+      for (const c of groupCols) {
+        const p = perColumn.get(c);
+        if (p.blockerRow < 0) continue;
+        const gap = p.attachedTop - p.blockerRow - 1;
+        if (gap > 0) thrust = Math.min(thrust, gap);
+      }
+
+      return { groupCols, perColumn, totalLoad, averageLoad, baseThrust, thrust };
+    }
+
 
 
     function forecastMove(a, b) {
@@ -1085,17 +1151,23 @@
       }
 
       let launched = 0;
-      for (const [c, col] of columns) {
-        const physics = launchColumnPhysics(trial, c, col.topMatch, col.baseThrust);
-        const thrust = physics.thrust;
+      const launchGroups = buildLaunchGroups(columns, info.lines);
+      for (const groupCols of launchGroups) {
+        const group = launchGroupPhysics(trial, columns, groupCols);
+        const thrust = group.thrust;
 
-        for (let r = physics.attachedTop; r < col.topMatch; r++) {
-          if (trial[r][c] !== null && r - thrust < 0) launched++;
-        }
+        for (const c of groupCols) {
+          const col = columns.get(c);
+          const physics = group.perColumn.get(c);
 
-        for (const position of info.matches) {
-          const [mr, mc] = position.split(",").map(Number);
-          if (mc === c && mr - thrust < 0) launched++;
+          for (let r = physics.attachedTop; r < col.topMatch; r++) {
+            if (trial[r][c] !== null && r - thrust < 0) launched++;
+          }
+
+          for (const position of info.matches) {
+            const [mr, mc] = position.split(",").map(Number);
+            if (mc === c && mr - thrust < 0) launched++;
+          }
         }
       }
 
@@ -1444,70 +1516,75 @@
         const placements = [];
         const thrustNotes = [];
 
-        for (const [c, info] of columns) {
-          const physics = launchColumnPhysics(board, c, info.topMatch, info.baseThrust);
-          const load = physics.load;
-          const thrust = physics.thrust;
-          const contactText = physics.blockerRow >= 0 ? "・上の塊まで" : "";
+        const launchGroups = buildLaunchGroups(columns, lines);
+        for (const groupCols of launchGroups) {
+          const group = launchGroupPhysics(board, columns, groupCols);
+          const thrust = group.thrust;
+          const groupLabel = groupCols.length >= 2
+            ? `${groupCols.map(c => c + 1).join("-")}列 固まり`
+            : `${groupCols[0] + 1}列`;
           thrustNotes.push(
-            `${c + 1}列:${info.baseThrust.toFixed(2)}→${thrust.toFixed(2)}${contactText}`
+            `${groupLabel}:${group.baseThrust.toFixed(2)}→${thrust.toFixed(2)}`
           );
 
-          // 積み荷はマッチへ直接つながっている連続部分だけ。
-          // 空白より上のブロックは動かさず、推力が届けば接触位置まで上昇する。
-          for (let r = physics.attachedTop; r < info.topMatch; r++) {
-            const value = board[r][c];
-            if (value === null) continue;
+          for (const c of groupCols) {
+            const info = columns.get(c);
+            const physics = group.perColumn.get(c);
 
-            board[r][c] = null;
-            const apexRow = r - thrust;
-            if (apexRow < 0) {
-              launchMoves.push({
-                from: { r, c },
-                to: { r: apexRow, c },
-                value,
-                matched: false
-              });
-              launchedOut++;
-            } else {
-              const landingRow = landingRowFromApex(apexRow);
-              launchMoves.push({
-                from: { r, c },
-                to: { r: landingRow, c },
-                visualTo: { r: apexRow, c },
-                value,
-                matched: false
-              });
-              placements.push({ r: landingRow, c, value });
+            // マッチへ直接つながっている積み荷だけが、横グループと同じ距離を上昇する。
+            for (let r = physics.attachedTop; r < info.topMatch; r++) {
+              const value = board[r][c];
+              if (value === null) continue;
+
+              board[r][c] = null;
+              const apexRow = r - thrust;
+              if (apexRow < 0) {
+                launchMoves.push({
+                  from: { r, c },
+                  to: { r: apexRow, c },
+                  value,
+                  matched: false
+                });
+                launchedOut++;
+              } else {
+                const landingRow = landingRowFromApex(apexRow);
+                launchMoves.push({
+                  from: { r, c },
+                  to: { r: landingRow, c },
+                  visualTo: { r: apexRow, c },
+                  value,
+                  matched: false
+                });
+                placements.push({ r: landingRow, c, value });
+              }
             }
-          }
 
-          // 揃ったブロック自身も同じ推力で上昇する。
-          // 上端を越えた時だけ消える。盤面内へ戻るものは帰還フラグを付け、着地後に別種類へ変化させる。
-          for (const r of info.matchedRows) {
-            const value = board[r][c];
-            if (value === null) continue;
+            // マッチ本体もグループ共通の推力で上昇する。
+            for (const r of info.matchedRows) {
+              const value = board[r][c];
+              if (value === null) continue;
 
-            board[r][c] = null;
-            const apexRow = r - thrust;
-            if (apexRow < 0) {
-              launchMoves.push({
-                from: { r, c },
-                to: { r: apexRow, c },
-                value,
-                matched: true
-              });
-              launchedOut++;
-            } else {
-              const landingRow = landingRowFromApex(apexRow);
-              launchMoves.push({
-                from: { r, c },
-                to: { r: landingRow, c },
-                visualTo: { r: apexRow, c },
-                value,
-                matched: true
-              });
-              placements.push({ r: landingRow, c, value: spendBlock(value) });
+              board[r][c] = null;
+              const apexRow = r - thrust;
+              if (apexRow < 0) {
+                launchMoves.push({
+                  from: { r, c },
+                  to: { r: apexRow, c },
+                  value,
+                  matched: true
+                });
+                launchedOut++;
+              } else {
+                const landingRow = landingRowFromApex(apexRow);
+                launchMoves.push({
+                  from: { r, c },
+                  to: { r: landingRow, c },
+                  visualTo: { r: apexRow, c },
+                  value,
+                  matched: true
+                });
+                placements.push({ r: landingRow, c, value: spendBlock(value) });
+              }
             }
           }
         }
